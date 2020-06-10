@@ -6,14 +6,6 @@
 #include <omp.h>
 #include <mpi.h>
 
-
-// Distributed array
-typedef struct {
-  double* local_array;
-  size_t local_elts, total_elts;
-  size_t global_offset; // Index in global array that is locally index 0
-} distributed_array_t;
-
 // A parallel context used to manage MPI and OpenMP information
 typedef struct {
   const int rank, n_ranks, primary_rank, openmp_threads;
@@ -40,6 +32,7 @@ parallel_context app_init( int argc, char** argv, parallel_context* context ){
     threads=omp_get_num_threads();
   }
 
+  // Create mock return object
   parallel_context ret_obj = {
     .rank           = rank,
     .n_ranks        = n_ranks,
@@ -48,6 +41,8 @@ parallel_context app_init( int argc, char** argv, parallel_context* context ){
     .openmp_threads = threads
   };
 
+  // I really want all members of parallel_context to be const,
+  // so this is how I initialize a parallel_context which I only have a reference to.
   memcpy( context, &ret_obj, sizeof(parallel_context) );
 }
 
@@ -56,35 +51,74 @@ void app_finalize( parallel_context* context ){
   MPI_Finalize();
 }
 
+// Distributed printf
+// All ranks print sequentially, in order.
+int distributed_printf( parallel_context* context, const char *format, ...){
+  for( int printing_rank = 0; printing_rank < context->n_ranks; ++printing_rank ){
+    if( context->rank == printing_rank ){
+      va_list args;
+      va_start(args, format);
+      vprintf(format, args);
+      va_end(args);
+    }
+    MPI_Barrier( context->comm );
+  }
+}
+
+// Primary only printf. All ranks wait until print completed.
+int primary_printf( parallel_context* context, const char *format, ...){
+  if( context->rank == context->primary_rank ){
+    va_list args;
+    va_start(args, format);
+    vprintf(format, args);
+    va_end(args);
+  }
+  MPI_Barrier( context->comm );
+}
+
+// Distributed array
+typedef struct {
+  double* local_array;
+  size_t local_elts, total_elts;
+  size_t global_offset; // Index in global array that is locally index 0
+} distributed_array;
+
+
 // Construct distributed array
-distributed_array_t allocate_distributed( size_t n_elts, parallel_context* context ){
+distributed_array allocate_distributed( size_t n_elts, parallel_context* context ){
 
+  // Calculate local size for local array
+  // Low portion is the floored average elements per rank.
   int low_portion = n_elts / context->n_ranks;
+  // High portion is low portion + remainder of the elements.
   int high_portion = low_portion + (n_elts % context->n_ranks);
+  // Total number of elements is (n_ranks - 1)*low_portion + high_portion
 
+  // Determine which portion this rank owns (Primary takes larger portion, others take smaller portion)
   size_t portion = (context->rank == context->primary_rank)?
                      high_portion   // Primary takes larger portion
                    : low_portion;   // Others take smaller portion
 
+  // Determin this ranks offset (global index corresponding to local index 0) (Primary starts a 0)
   size_t offset = (context->rank == context->primary_rank)?
                     0
                   : high_portion + ((context->rank-1)*(low_portion));
 
-  void* array = (double*) malloc( portion*sizeof(double) );
+  double* array = (double*) malloc( portion*sizeof(double) );
 
-  distributed_array_t ret_obj = {
+  // Construct and return distributed_array structure
+  distributed_array ret_obj = {
     .local_array   = array,
     .local_elts    = portion,
     .total_elts    = n_elts,
     .global_offset = offset
   };
 
-
   return ret_obj;
 }
 
 // Initialize distributed array with arbitrary values
-void init_distributed_array( distributed_array_t* distributed_array, parallel_context* context ){
+void init_distributed_array( distributed_array* distributed_array, parallel_context* context ){
   #pragma omp parallel for
   for( int i = 0; i < distributed_array->local_elts; ++i ){
     // Use global offset to create value for this local index
@@ -105,7 +139,7 @@ double reduce_local_array( double* array, size_t n_elts ){
 
 // Distributed-Parallel reduce a distributed array
 // Note: returns zero if not calling on the primary rank
-double reduce_distributed_array( distributed_array_t* distributed_array, parallel_context* context ){
+double reduce_distributed_array( distributed_array* distributed_array, parallel_context* context ){
   // Array where (on primary) sums will be gathered into
   double* all_reductions = NULL ;
 
@@ -134,31 +168,6 @@ double reduce_distributed_array( distributed_array_t* distributed_array, paralle
   return  sum;
 }
 
-// Distributed printf
-// All ranks print sequentially, in order.
-int distributed_printf( parallel_context* context, const char *format, ...){
-  for( int printing_rank = 0; printing_rank < context->n_ranks; ++printing_rank ){
-    if( context->rank == printing_rank ){
-      va_list args;
-      va_start(args, format);
-      vprintf(format, args);
-      va_end(args);
-    }
-    MPI_Barrier( context->comm );
-  }
-}
-
-// Primary only printf. All ranks wait until print completed.
-int primary_printf( parallel_context* context, const char *format, ...){
-  if( context->rank == context->primary_rank ){
-    va_list args;
-    va_start(args, format);
-    vprintf(format, args);
-    va_end(args);
-  }
-  MPI_Barrier( context->comm );
-}
-
 int main( int argc, char** argv ){
 
   // Initialize app and context
@@ -180,7 +189,7 @@ int main( int argc, char** argv ){
   primary_printf( &context, "N: %d\n", N );
 
   // Allocate distributed array
-  distributed_array_t array = allocate_distributed( N, &context );
+  distributed_array array = allocate_distributed( N, &context );
 
   // Initialize distributed array with arbitrary values
   init_distributed_array( &array, &context );
