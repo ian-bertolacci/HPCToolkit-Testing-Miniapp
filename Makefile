@@ -1,14 +1,16 @@
-.PHONY: all run profile viewprofile viewtrace viewall clean clean-bin clean-profile
+.PHONY: all run analyze viewprofile viewtrace viewall clean clean-bin clean-profile
 
 .EXPORT_ALL_VARIABLES:
 
 CC_FLAGS = -O0 -g3 -fopenmp
 CC=mpicc
 
+MPISPWAN=mpirun
+
 EXE=miniapp
 
 
-all: $(EXE)
+build: $(EXE)
 
 $(EXE):%:%.c
 	$(CC) $(CC_FLAGS) $^ -o $@ -lm
@@ -24,7 +26,8 @@ HPC_DATABASE=$(EXE)_procs-$(TEST_MPI_PROCESSES)_threads-$(OMP_NUM_THREADS)_n-elt
 
 run: $(HPC_MEASUREMENTS)
 
-profile: $(HPC_STRUCT) $(HPC_MEASUREMENTS) $(HPC_DATABASE)
+analyze: $(HPC_STRUCT) $(HPC_MEASUREMENTS) $(HPC_DATABASE)
+analyse: analyze
 
 viewprofile: $(HPC_DATABASE)
 	hpcviewer $(HPC_DATABASE)
@@ -38,7 +41,7 @@ viewall: $(HPC_DATABASE)
 
 # Run app with hpcrun to create measurements file (HPC_MEASUREMENTS)
 $(HPC_MEASUREMENTS): $(EXE)
-	mpirun -np $(TEST_MPI_PROCESSES) hpcrun -o $@ -t  ./$< $(TEST_NUM_ELEMENTS)
+	$(MPISPWAN) -np $(TEST_MPI_PROCESSES) hpcrun -o $@ -t  ./$< $(TEST_NUM_ELEMENTS)
 
 # Inpsect executable
 $(HPC_STRUCT): $(EXE)
