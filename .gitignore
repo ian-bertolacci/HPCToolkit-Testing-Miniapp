@@ -1,0 +1,4 @@
+miniapp
+*.hpcstruct
+*.hpcmeasurements
+*.hpcdatabase
