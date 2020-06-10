@@ -11,9 +11,6 @@ make viewall
 
 That will launch both the trace (hpctraceviewer) and source (hpcviewer) profiles views, and resolve all the dependencies involved.
 
-```
-make view
-```
 To see only the source profile: `make viewprofile`
 To see only the trace profile: `make viewtrace`
 
