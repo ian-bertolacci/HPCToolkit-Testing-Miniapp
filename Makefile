@@ -1,13 +1,11 @@
-.PHONY: build run analyze analyse analysis viewprofile viewtrace viewall clean clean-bin clean-exe clean-objs clean-profile clean-hpcstruct clean-hpcmeasurement clean-hpcdatabase
+.PHONY: all build run analyze analyse analysis viewprofile viewtrace viewall clean clean-bin clean-exe clean-objs clean-profile clean-hpcstruct clean-hpcmeasurement clean-hpcdatabase
 
 .EXPORT_ALL_VARIABLES:
 
-CC_FLAGS = -O3 -gdwarf-2 -g3 -lm -fopenmp
-CC=mpicc
-
-EXE=miniapp
-
+MPICC?=mpicc
+MPICXX?=mpicxx
 MPISPWAN?=mpirun
+
 HPCSTRUCT?=hpcstruct
 HPCRUN?=hpcrun
 HPCPROF?=hpcprof-mpi
@@ -20,11 +18,13 @@ HPC_TRACE?=yes
 HPC_DATABASE_METRIC_DB?=yes
 
 HPC_RUN_EVENTS ?= CPUTIME@1
-hpc_run_events_name != echo $(HPC_RUN_EVENTS) | sed 's|[[:space:]]\+|_|g'
-HPC_STRUCT=$(EXE).hpcstruct
-HPC_MEASUREMENTS=$(EXE)_procs-$(TEST_MPI_PROCESSES)_threads-$(OMP_NUM_THREADS)_n-elts-$(TEST_NUM_ELEMENTS)_trace-$(HPC_TRACE)_$(hpc_run_events_name).hpcmeasurements
-HPC_DATABASE=$(EXE)_procs-$(TEST_MPI_PROCESSES)_threads-$(OMP_NUM_THREADS)_n-elts-$(TEST_NUM_ELEMENTS)_trace-$(HPC_TRACE)_$(hpc_run_events_name)_metric-db-$(HPC_DATABASE_METRIC_DB).hpcdatabase
 
+CC_FLAGS ?= -O3 -gdwarf-2 -g3 -lm -fopenmp
+CC=$(MPICC) # I dont like this, but CC is set by default in make, I think, so ?= does not overwrite the CC variable.
+
+EXE=miniapp
+
+# Setup hpcrun trace arguments
 ifeq ($(HPC_TRACE),yes)
 	hpcrun_trace_arg=-t
 else
@@ -35,30 +35,47 @@ else
 	endif
 endif
 
+# Setup hpcrun event arguments and events name substring
 ifeq ($(HPC_RUN_EVENTS), )
-	hpc_run_events_arg =
+	hpc_run_events_name=DEFAULT
+	hpc_run_events_arg=
 else
+	hpc_run_events_name !=  echo $(HPC_RUN_EVENTS) | sed 's|[[:space:]]\+|_|g'
 	hpc_run_events_arg = -e $(shell echo $(HPC_RUN_EVENTS) | sed 's|[[:space:]]\+| -e |g')
 endif
 
+HPC_STRUCT=$(EXE).hpcstruct
+HPC_MEASUREMENTS=$(EXE)_procs-$(TEST_MPI_PROCESSES)_threads-$(OMP_NUM_THREADS)_n-elts-$(TEST_NUM_ELEMENTS)_trace-$(HPC_TRACE)_$(hpc_run_events_name).hpcmeasurements
+HPC_DATABASE=$(EXE)_procs-$(TEST_MPI_PROCESSES)_threads-$(OMP_NUM_THREADS)_n-elts-$(TEST_NUM_ELEMENTS)_trace-$(HPC_TRACE)_$(hpc_run_events_name)_metric-db-$(HPC_DATABASE_METRIC_DB).hpcdatabase
+
+all: analyze
+
+# Phoney dependencies
+# Build miniapp executable
 build: $(EXE)
 
+# Run miniapp executable in profiling mode, creating HPCToolkit measurements output
 run: $(HPC_MEASUREMENTS)
 
+# Create HPCToolkit profile database
 analyze: $(HPC_STRUCT) $(HPC_MEASUREMENTS) $(HPC_DATABASE)
 analyse: analyze
 analysis: analyze
 
+# View profile with hpcviewer
 viewprofile: $(HPC_DATABASE)
 	hpcviewer $(HPC_DATABASE) &
 
+# View trace with hpctraceviewer
 viewtrace: $(HPC_DATABASE)
 	hpctraceviewer $(HPC_DATABASE) &
 
+# View both profile and traice with hpcviewer and hpctraceviewer respectively
 viewall: $(HPC_DATABASE)
 	hpcviewer $(HPC_DATABASE) &
 	hpctraceviewer $(HPC_DATABASE) &
 
+# Real dependencies
 # Build executable
 $(EXE):%:%.c
 	$(CC) $^ -o $@ $(CC_FLAGS)
@@ -75,7 +92,7 @@ $(HPC_STRUCT): $(EXE)
 $(HPC_DATABASE): $(HPC_STRUCT) $(HPC_MEASUREMENTS)
 	$(HPCPROF) -S $(HPC_STRUCT) -I ./+ $(HPC_MEASUREMENTS) --metric-db $(HPC_DATABASE_METRIC_DB) -o $@
 
-
+# Cleaning
 clean: clean-profile clean-bin
 
 clean-bin: clean-exe clean-objs
