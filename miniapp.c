@@ -5,6 +5,21 @@
 #include <math.h>
 #include <omp.h>
 #include <mpi.h>
+#include <assert.h>
+
+#define min(x,y) (((x)<(y))?(x):(y))
+#define max(x,y) (((x)>(y))?(x):(y))
+
+int factorial( int n ){
+  if( n <= 0 ) return 1;
+  if( n == 1 || n == 2 ) return n;
+
+  int product = 1;
+  for( int i = 1; i <= n; ++i ){
+    product *= i;
+  }
+  return product;
+}
 
 // A parallel context used to manage MPI and OpenMP information
 typedef struct {
@@ -29,7 +44,7 @@ parallel_context app_init( int argc, char** argv, parallel_context* context ){
   #pragma omp parallel
   {
     #pragma omp single
-    threads=omp_get_num_threads();
+    threads = omp_get_num_threads();
   }
 
   // Create mock return object
@@ -51,29 +66,64 @@ void app_finalize( parallel_context* context ){
   MPI_Finalize();
 }
 
-// Distributed printf
-// All ranks print sequentially, in order.
-int distributed_printf( parallel_context* context, const char *format, ...){
-  for( int printing_rank = 0; printing_rank < context->n_ranks; ++printing_rank ){
-    if( context->rank == printing_rank ){
-      va_list args;
-      va_start(args, format);
-      vprintf(format, args);
-      va_end(args);
+// Rank specific printf using valist. All ranks wait until print completed.
+void rank_vprintf( parallel_context* context, int rank, const char *format, va_list args ){
+  #pragma omp single
+  {
+    // if printing rank is the primary rank, and this is the primary rank simply print to stdout
+    if( rank == context->primary_rank && context->rank == context->primary_rank){
+      vfprintf( stdout,  format, args );
+
+      // If this rank is either the printing or primary rank, perform send/recieve from printing to primary
+    } else if( context->rank == context->primary_rank || context->rank == rank ) {
+      size_t buffer_size = max(1024, 4*strlen(format));
+      char* buffer = (char*) calloc( buffer_size, sizeof(char) );
+
+      if( context->rank == rank ){
+        vsprintf( buffer, format, args );
+        // printf( "rank %d sending \"%s\"\n", context->rank, buffer );
+        MPI_Send( buffer, buffer_size, MPI_CHAR, context->primary_rank, 0, context->comm );
+      }
+
+      if( context->rank == context->primary_rank ){
+        // printf( "rank %d recieving from %d\n", context->rank, rank );
+        MPI_Recv( buffer, buffer_size, MPI_CHAR, rank, 0, context->comm, NULL );
+        // printf( "rank %d recieved from %d: \"%s\"\n", context->rank, rank, buffer );
+        fprintf( stdout, "%s", buffer );
+      }
+
+      free( buffer );
     }
+    fflush( stdout );
     MPI_Barrier( context->comm );
   }
 }
 
+// Rank specific printf. All ranks wait until print completed.
+void rank_printf( parallel_context* context, int rank, const char *format, ... ){
+  va_list args;
+  va_start( args, format );
+  rank_vprintf( context, rank, format, args );
+  va_end( args );
+}
+
 // Primary only printf. All ranks wait until print completed.
-int primary_printf( parallel_context* context, const char *format, ...){
-  if( context->rank == context->primary_rank ){
+void primary_printf( parallel_context* context, const char *format, ... ){
+  va_list args;
+  va_start( args, format );
+  rank_vprintf( context, context->primary_rank, format, args );
+  va_end( args );
+}
+
+// Distributed printf
+// All ranks print sequentially, in order.
+void distributed_printf( parallel_context* context, const char *format, ... ){
+  for( int printing_rank = 0; printing_rank < context->n_ranks; ++printing_rank ){
     va_list args;
-    va_start(args, format);
-    vprintf(format, args);
-    va_end(args);
+    va_start( args, format );
+    rank_vprintf( context, printing_rank, format, args );
+    va_end( args );
   }
-  MPI_Barrier( context->comm );
 }
 
 // Distributed array
@@ -85,24 +135,64 @@ typedef struct {
 
 
 // Construct distributed array
-distributed_array allocate_distributed( size_t n_elts, parallel_context* context ){
+distributed_array allocate_distributed_array( size_t n_elts, parallel_context* context ){
+  // Fair partitioning
+  // // Calculate local size for local array
+  // // Low portion is the floored average elements per rank.
+  // int low_portion = n_elts / context->n_ranks;
+  // // High portion is low portion + remainder of the elements.
+  // int high_portion = low_portion + (n_elts % context->n_ranks);
+  // // Total number of elements is (n_ranks - 1)*low_portion + high_portion
+  //
+  // // Determine which portion this rank owns (Primary takes larger portion, others take smaller portion)
+  // size_t portion = (context->rank == context->primary_rank)?
+  //                    high_portion   // Primary takes larger portion
+  //                  : low_portion;   // Others take smaller portion
+  //
+  // // Determin this ranks offset (global index corresponding to local index 0) (Primary starts a 0)
+  // size_t offset = (context->rank == context->primary_rank)?
+  //                   0
+  //                 : high_portion + ((context->rank-1)*(low_portion));
 
-  // Calculate local size for local array
-  // Low portion is the floored average elements per rank.
-  int low_portion = n_elts / context->n_ranks;
-  // High portion is low portion + remainder of the elements.
-  int high_portion = low_portion + (n_elts % context->n_ranks);
-  // Total number of elements is (n_ranks - 1)*low_portion + high_portion
+  // Unfair partitioning (for load imballance demonstration)
+  int denomenator = (int) ( .5 * context->n_ranks * (context->n_ranks + 1) );
+  int portions[context->n_ranks];
+  int offsets[context->n_ranks];
+  int portion_sum = 0;
+  for( int sim_rank = 0; sim_rank < context->n_ranks; ++sim_rank ){
+    portions[sim_rank] = (sim_rank+1) * (n_elts / denomenator);
 
-  // Determine which portion this rank owns (Primary takes larger portion, others take smaller portion)
-  size_t portion = (context->rank == context->primary_rank)?
-                     high_portion   // Primary takes larger portion
-                   : low_portion;   // Others take smaller portion
+    if( sim_rank + 1 == context->n_ranks ){
+      portions[sim_rank] += n_elts % denomenator;
+    }
 
-  // Determin this ranks offset (global index corresponding to local index 0) (Primary starts a 0)
-  size_t offset = (context->rank == context->primary_rank)?
-                    0
-                  : high_portion + ((context->rank-1)*(low_portion));
+    portion_sum += portions[sim_rank];
+
+    if( sim_rank == 0 ){
+      offsets[sim_rank] = 0;
+    } else {
+      offsets[sim_rank] = offsets[sim_rank-1] + portions[sim_rank-1];
+    }
+  }
+
+  // if( context->rank == context->primary_rank ){
+  //   printf( "Denomenator: %d\nPortion Sum: %d\n", denomenator, portion_sum );
+  //   for( int sim_rank = 0; sim_rank < context->n_ranks; ++sim_rank ){
+  //     printf( "Rank %d: %d (+%d)\n", sim_rank, portions[sim_rank], offsets[sim_rank] );
+  //   }
+  //   if( portion_sum != n_elts ){
+  //     printf("SUM NOT EQUAL!!!\n\n\n");
+  //   }
+  // }
+  // MPI_Barrier( context->comm );
+
+  assert( portion_sum == n_elts && "Invalid portioning in init_distributed_array" );
+
+
+  int portion = portions[context->rank];
+  int offset  = offsets [context->rank];
+
+  // distributed_printf( context, "Rank %d\nPortion: %d\nOffset %d\n", context->rank, portion, offset );
 
   double* array = (double*) malloc( portion*sizeof(double) );
 
@@ -125,6 +215,10 @@ void init_distributed_array( distributed_array* distributed_array, parallel_cont
     double j =  (i+1) + distributed_array->global_offset;
     distributed_array->local_array[i] = cos( sqrt( abs( exp( sin( j ) ) ) ) );
   }
+}
+
+void free_distributed_array( distributed_array* distributed_array ){
+  free(distributed_array->local_array);
 }
 
 // Parallel reduce a double array
@@ -189,7 +283,8 @@ int main( int argc, char** argv ){
   primary_printf( &context, "N: %d\n", N );
 
   // Allocate distributed array
-  distributed_array array = allocate_distributed( N, &context );
+  distributed_array array = allocate_distributed_array( N, &context );
+  distributed_printf( &context, "Rank %d/%d owns %d of %d elements\n", context.rank, context.n_ranks, array.local_elts, array.total_elts );
 
   // Initialize distributed array with arbitrary values
   init_distributed_array( &array, &context );
@@ -197,8 +292,11 @@ int main( int argc, char** argv ){
   // Reduce distributed array
   double sum = reduce_distributed_array( &array, &context );
 
-  // Print reduction on primary
+  // Print reduction value
   primary_printf( &context, "Sum: %f\n", sum );
+
+  // Free distributed array
+  free_distributed_array( &array );
 
   // Finalize app
   app_finalize( &context );
