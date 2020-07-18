@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <unistd.h>
 #include <ctype.h>
 #include <time.h>
@@ -42,7 +43,6 @@ bool isinteger( const char* str ){
   return isunsignedinteger( str + start );
 }
 
-
 // Distributed array
 typedef struct {
   double* local_array;
@@ -77,7 +77,7 @@ typedef struct {
   const bool initialized;
 
   const int N;
-  const bool syncronize_at_end_of_distributed_array_operations;
+  const bool synchronize_at_end_of_distributed_array_operations;
   const verbosity_t verbosity;
   const distribution_type_t distribution_type;
 
@@ -86,6 +86,9 @@ typedef struct {
   const iteration_order_type_t iteration_order_type;
   const omp_sched_t omp_loop_schedule;
   const int omp_chunk_size;
+
+  int omp_print_state;
+  omp_lock_t lock;
 
   const int seed;
 } program_context_t;
@@ -102,7 +105,7 @@ void program_finalize( ){
 }
 
 // Parse arguments and create global program context
-// NOTE: Cannot use any of the distributed printf functions here
+// Note: Cannot use any of the distributed printf functions here
 program_context_t program_init( int argc, char** argv ){
   if( global_program_context.initialized ){
     fprintf( stderr, "Error: Program already initialized\n" );
@@ -150,7 +153,7 @@ program_context_t program_init( int argc, char** argv ){
   int omp_num_threads = default_omp_num_threads;
   omp_sched_t omp_schedule = default_omp_schedule;
   int omp_chunk_size = default_omp_chunk_size;
-  bool syncronize_at_end_of_distributed_array_operations = default_wait_on_non_collective_distiributed_array_operations;
+  bool synchronize_at_end_of_distributed_array_operations = default_wait_on_non_collective_distiributed_array_operations;
 
   char* usage_fmt_string = \
     "    -h"
@@ -184,7 +187,7 @@ program_context_t program_init( int argc, char** argv ){
     "          \"fair\" : Distribute values fairly.\n"
     "          \"unfair\" : Distribute values unfairly.\n\n"
     "    -w \n"
-    "        Force ranks to syncronize at each distributed array opperation.\n\n"
+    "        Force ranks to synchronize at each distributed array opperation.\n\n"
     "    -l <OpenMP schedule name>\n"
     "        Set OpenMP loop schedule.\n"
     "        Values:\n"
@@ -275,7 +278,7 @@ program_context_t program_init( int argc, char** argv ){
       break;
 
       case 'w': {
-        syncronize_at_end_of_distributed_array_operations = true;
+        synchronize_at_end_of_distributed_array_operations = true;
       }
       break;
 
@@ -383,12 +386,13 @@ program_context_t program_init( int argc, char** argv ){
   // Re-seed srand with the seed
   srand( rank_seed );
 
+
   // Create return/memcopy object
   program_context_t ret_obj = {
     .initialized           = true,
 
     .N                     = N,
-    .syncronize_at_end_of_distributed_array_operations = syncronize_at_end_of_distributed_array_operations,
+    .synchronize_at_end_of_distributed_array_operations = synchronize_at_end_of_distributed_array_operations,
     .verbosity             = verbosity,
     .distribution_type     = distribution_type,
     .iteration_order_type  = iteration_order_type,
@@ -401,13 +405,23 @@ program_context_t program_init( int argc, char** argv ){
 
     .omp_loop_schedule     = omp_schedule,
     .omp_chunk_size        = omp_chunk_size,
+
+    .omp_print_state       = 0,
+
     .seed                  = rank_seed
   };
+
+  omp_init_lock( &(ret_obj.lock) );
 
   // I really want all members of program_context_t to be const,
   // So we memcpy it into place to force the overwrite.
   memcpy( &global_program_context, &ret_obj, sizeof(program_context_t) );
 
+  int compare = memcmp( &ret_obj, &global_program_context, sizeof(program_context_t) );
+  if( compare != 0 ){
+    fprintf( stderr, "Internal Error: mock program context (@%p) and global_program_context (@%p) are unequal (%d)\n", &ret_obj, &global_program_context, compare );
+    exit(-1);
+  }
 
   // Should be able to set the schedule here, and never worry about how to set
   // set the for loop clause
@@ -415,65 +429,331 @@ program_context_t program_init( int argc, char** argv ){
 
   omp_set_num_threads( global_program_context.omp_num_threads );
 
+  #pragma omp single
+  {
+    if( ! omp_test_lock( &(global_program_context.lock) ) ){
+      fprintf( stderr, "Unable to acquire newly initialized OpenMP lock.\n" );
+      exit(-1);
+    }
+    omp_unset_lock( &(global_program_context.lock) );
+  }
+
   return ret_obj;
 }
 
-// syncronizable vfprintf with rank prefix
-void syncable_vfprintf( const bool syncronize, FILE* stream, const char* format, va_list args ){
-  #pragma omp single
-  {
-    char* full_string = NULL;
-    if( format != NULL && strlen(format) > 0 ){
-      // Note: I want alignment, and it is unlikely that there are going to be
-      // more than 99 mpi processes or openmp threads running
-      // char* rank_format = "(% 2d-% 2d) ";
-      char* rank_format = "(% 2d) ";
+// synchronizable vfprintf with rank prefix
+void syncable_vfprintf( const bool synchronize, FILE* stream, const char* format, va_list args ){
 
-      // Have to duplicate args for v*printf calls
-      va_list args_copy_for_len, args_copy_for_format;
-      va_copy(args_copy_for_len,    args);
-      va_copy(args_copy_for_format, args);
+  // typedef enum {
+  //   size_info,
+  //   strings
+  // } message_type_t;
 
-      // Calculate full size of formatted strings (not includeing final null terminator)
-      ssize_t total_size =  snprintf( NULL, 0, rank_format, global_program_context.rank )
-                         + vsnprintf( NULL, 0, format, args_copy_for_len );
+  typedef struct {
+    // message_type_t type;
+    // int sending_rank;
+    int sending_thread;
+  } message_metadata_t;
 
-      // Allocate space for full output string
-      full_string = (char*) malloc( (total_size + 1) * sizeof(char) );
+  typedef struct {
+    message_metadata_t metadata;
+    ssize_t string_size;
+  } string_info_message_t;
 
-      // format string in parts
-      ssize_t offset = 0;
-      offset +=  sprintf( full_string + offset, rank_format, global_program_context.rank );
-      offset += vsprintf( full_string + offset, format, args_copy_for_format );
+  // Some common OpenMP 'facts'
+  // Note: omp_thread_num is only valid if in_parallel_region
+  int omp_thread_num = omp_get_thread_num();
+  bool in_parallel_region = omp_in_parallel();
+
+  const bool has_message = (format != NULL && strlen(format) > 0);
+
+  // Byte array of message string.
+  size_t message_size = 0;
+  uint8_t* message = NULL;
+  // Full formatted string that will written to stream
+  // Note: This points to a offset location in message, do not free.
+  ssize_t string_size = 0;
+  char* full_string = NULL;
+
+  // Part 1: Setup full string
+  // Only do if there is actually something to print.
+  if( has_message ){
+    // Note: I want alignment, and it is unlikely that there are going to be
+    // more than 99 mpi processes or openmp threads running
+    const char* rank_format;
+    if( in_parallel_region ){
+      rank_format = "(% 2d,% 2d) ";
+    } else {
+     rank_format = "(% 2d) ";
     }
-    // Print in rank order (only if syncronized)
-    for( int rank = 0; rank <= global_program_context.n_ranks; ++rank ){
-      // If this is my turn (and I want to) print and flush
-      if( rank == global_program_context.rank && full_string != NULL ){
-        fputs( full_string, stream );
-        fflush( stream );
-      }
 
-      if( syncronize ){
-        MPI_Barrier( global_program_context.comm );
-      }
+    // Have to duplicate args for v*printf calls
+    va_list args_copy_for_len, args_copy_for_format;
+    va_copy(args_copy_for_len, args);
+    va_copy(args_copy_for_format, args);
+
+    // Calculate formatted string size, in char's, including null terminator.
+    string_size = // ...
+        // Size of formatted rank string
+         snprintf( NULL, 0, rank_format, global_program_context.rank, omp_thread_num )
+        // Size of the formatted message string
+      + vsnprintf( NULL, 0, format, args_copy_for_len )
+        // Null terminator
+      + 1;
+    // Calculate full message size
+    message_size = (string_size * sizeof(char)) + (synchronize ? sizeof(message_metadata_t) : 0 );
+
+    // Allocate space for full message
+    message = (uint8_t*) malloc( message_size );
+    // Point full_string to offset in message if synchronized.
+    full_string = (char*) (message + (synchronize ? sizeof(message_metadata_t) : 0));
+
+    // format string in parts
+    ssize_t offset = 0;
+    offset +=  sprintf( full_string + offset, rank_format, global_program_context.rank, omp_thread_num );
+    offset += vsprintf( full_string + offset, format, args_copy_for_format );
+  } // if has_message
+
+  // Part 2: Do printing
+  // If unsynchronized, simply print full_string
+  // If synchronized, there are several phases.
+  // Note: Must all be point to point, because MPI is not aware of threading
+  // Phase 1: Send size of each string rank will be sending. Use a special tag.
+  // Phase 2: Send actual strings. Use a special tag.
+  // Phase 3: Primary receives...
+  // Phase 3.a: recieves size of strings and allocates space
+  // Phase 3.b: recieves strings
+  // Phase 4: Primary prints strings
+  // Note: Phase 3 and 4 can either be as a whole (ie all of phase 3.a,
+  // then all of phase 3.b, then all of Phase 4) or interwoven (ie, for single
+  // rank-thread, phase 3.a, then phase 3.b, then phase 4, then onto the next
+  // rank-thread, in the rank-thread order).
+
+  // If printing in synchronized, ordered manner
+  if( synchronize ){
+    // Tags for phases
+    const int phase_1_tag = 1;
+    const int phase_2_tag = 2;
+
+    // Create Phase 1 message
+    string_info_message_t string_info = {
+      .metadata = {
+        // .type = size_info
+        // .sending_rank = global_program_context.rank
+        .sending_thread = omp_thread_num
+      },
+      // Send only the size of the actual string, not the metadate+string message size
+      // Conditional probably unnecessary but being explicit
+      .string_size = (has_message ? string_size : 0)
+    };
+
+    // Setup Phase 2 message
+    if( has_message ){
+      // Note: the message_metadata_t of the message starts at byte 0 of message
+      ((message_metadata_t*) message)->sending_thread = omp_thread_num;
     }
 
-    if( full_string != NULL ){
-      free( full_string );
+    // Phase 1: Send string size
+    // Note: While defined, these handles are not used because the buffers
+    // involved are not freed until after the barrier, the completion of which
+    // by the primary ranks is directly implied by the recieves of these sends.
+    MPI_Request send_size, send_str;
+    MPI_Isend( &string_info, sizeof(string_info_message_t), MPI_INT, global_program_context.primary_rank, phase_1_tag, global_program_context.comm, &send_size );
+    // Phase 2: Send string
+    if( has_message ){
+      MPI_Isend( &full_string, strlen(full_string), MPI_CHAR, global_program_context.primary_rank, phase_2_tag, global_program_context.comm, &send_str );
     }
-  } // end critical
+
+    // Phase 3 and 4
+    // Make single, so only 1 thread is recieving and printing messages and so
+    // only one thread waits at barrier to syncronize all ranks. Threads in the
+    // rank are syncronized after the MPI barrier with omp barrier
+    #pragma omp single
+    {
+      // If primary, do phase 3, and 4.
+      // Otherwise, hangout at barrier.
+      if( global_program_context.rank == global_program_context.primary_rank ){
+        // First, we know how many strings we expect: One per thread on all ranks
+        size_t expected_threads = (in_parallel_region ?  global_program_context.omp_num_threads : 1 );
+        // size_t num_strings = global_program_context.n_ranks * expected_threads;
+
+        // Thread string buffers
+        // Several things are happening here.
+        // 1. Because a rank cannot recieve to a particular thread's string,
+        //    we need to allocate a buffer that is at least as large as the
+        //    largest possible message which will be recieved into before being
+        //    the data is moved to the proper location in the string.
+        //
+        // max_strlen is the strlen of the largest string.
+        size_t max_str_len = 0;
+
+        // 2. Allocating each string's buffer individually is wasteful, can
+        //    allocate expected_threads*( max_str_len*sizeof(char) + sizeof(message_metadata_t) )
+        //    and then create pointers to the proper offsets. This is written
+        //    to an offset into the scratchpad.
+        //
+        // scratchpad_space is this allocation,
+        // scratchpad_len is its size in bytes
+        uint8_t* scratchpad_space = NULL;
+        size_t scratchpad_len = 0;
+
+        // 3. To sort the strings for printing, use an array of pointers that
+        //    maps the thread id to a string. This is assigned to after the
+        //    string is recieved (with it's thread id)
+        //
+        // thread_string is this array
+        char** thread_string = (char**) malloc( expected_threads * sizeof(char*) );
+
+        // 4. Still need to know the strlen of a thread's string to know if it
+        //    needs to be printed.
+        //
+        // thread_string_lengths maps the thread id to it's string strlen
+        ssize_t* thread_string_lengths = (ssize_t*) malloc( expected_threads * sizeof(ssize_t) );
+
+        // 5. All of these buffers are reused between ranks iterations.
+        //    The only buffer that should change is scratchpad_space.
+        //    Everything else is dependent on the total number of threads,
+        //    which we know ahead of time.
+
+        // Phase 3.a, 3.b, and 4 combined for each rank, but needs to be split
+        // on the threads (since the send doesn't specify the thread source).
+        for( int rank = 0; rank < global_program_context.n_ranks; ++rank ){
+
+          // Phase 3.a: Get size of strings
+          // Note: anonymous_thread is *NOT* a thread id it simply counting how
+          // many threads from this rank have been recieved.
+          for( int anonymous_thread = 0; anonymous_thread < expected_threads; ++anonymous_thread ){
+            // Recieve the Phase 1 metadata
+            string_info_message_t string_info;
+            MPI_Recv( &string_info, sizeof(string_info_message_t), MPI_BYTE, rank, phase_1_tag, global_program_context.comm, NULL );
+
+            // Set size of string
+            thread_string_lengths[string_info.metadata.sending_thread] = string_info.string_size;
+          } // Phase 3.a for thread
+
+          // Check if the scratchpad_space needs to be reallocated
+          // scratchpad_space
+          // Max size of a message
+          size_t max_message_size = max_str_len*sizeof(char) + sizeof(message_metadata_t);
+          // Full space necessary to recieve all messages
+          size_t necessary_scratchpad_len = expected_threads * max_message_size;
+          if( scratchpad_len < necessary_scratchpad_len ){
+            free( scratchpad_space );
+            scratchpad_len = necessary_scratchpad_len;
+            scratchpad_space = (uint8_t*) malloc( scratchpad_len );
+          }
+
+          // Phase 3.b: Recieve strings
+          // Note: anonymous_thread is *NOT* a thread id it simply counting how
+          // many threads from this rank have been recieved.
+          for( int anonymous_thread = 0; anonymous_thread < expected_threads; ++anonymous_thread ){
+            // Offset into the scratchpad space
+            uint8_t* scratchpad_offset = scratchpad_space + (anonymous_thread * max_message_size);
+            // Metadata of mesage is at scratchpad_offset + 0
+            message_metadata_t* message_metadata = (message_metadata_t*) scratchpad_offset;
+            // String of message is at scratchpad_offset + sizeof(message_metadata_t);
+            char* string = scratchpad_offset + sizeof(message_metadata_t);
+            // Recieve message
+            MPI_Recv( scratchpad_offset, max_message_size, MPI_BYTE, rank, phase_2_tag, global_program_context.comm, NULL );
+
+            // Sort the thread's string into the list of strings.
+            thread_string[message_metadata->sending_thread] = string;
+          } // Phase 3.b
+
+          // Phase 4: Print strings
+          for( int thread = 0; thread < expected_threads; ++thread ){
+            if( thread_string_lengths[thread] == 0 ) continue;
+            fputs( thread_string[thread], stream );
+          }
+
+          // Flush stream
+          fflush( stream );
+
+        } // for rank
+
+        // Free buffers
+        // Note: These conditional guards shouldn't be necessary. In fact, might
+        // want to make an assert that this is not true, because it being true
+        // might indicate a failure in the process.
+        if( scratchpad_space      ) free( scratchpad_space );
+        if( thread_string         ) free( thread_string );
+        if( thread_string_lengths ) free( thread_string_lengths );
+
+      } // if primary rank
+
+      // MPI Barrier on all ranks
+      MPI_Barrier( global_program_context.comm );
+    } // pragma single
+
+    // All theads on rank syncronize
+    #pragma omp barrier
+  } // If syncronize
+
+  //   // If not on primary rank
+  //   for( int rank = 0; rank < global_program_context.n_ranks; ++rank ){
+  //
+  //     // Printing Phase
+  //     // If this is my turn (and I want to) print and flush
+  //     if( rank == global_program_context.rank && full_string != NULL ){
+  //       // If in a parallel region, need to perform prints in thread order
+  //       // but only if synchronizing
+  //       if( in_parallel_region ){
+  //         bool thread_printed = false;
+  //         while( !thread_printed ){
+  //           if( global_program_context.omp_print_state == omp_thread_num ){
+  //             omp_set_lock( &(global_program_context.omp_print_lock) );
+  //             fputs( full_string, stream );
+  //             fflush( stream );
+  //             thread_printed = true;
+  //             thread += 1;
+  //             omp_unset_lock( &(global_program_context.omp_print_lock) );
+  //           }
+  //         }
+  //
+  //         // Only one thread (the fully last one to print) should open the barrier.
+  //
+  //       }
+  //       // If not in parallel region can just print
+  //       else {
+  //         fputs( full_string, stream );
+  //         fflush( stream );
+  //       }
+  //     } //if printing
+  //
+  //     // synchronization phase
+  //     if( in_parallel_region ){
+  //       if( omp_thread_num  == 0 ){
+  //         MPI_Barrier( global_program_context.comm );
+  //       } else {
+  //         while( global_program_context.omp_print_state > 0 );
+  //       }
+  //     } else {
+  //       ''
+  //     }
+  //     MPI_Barrier( global_program_context.comm );
+  //
+  //   } // For rank
+  // }
+  // If printing in unsynchronized, unordered manner
+  else {
+    fputs( full_string, stream );
+    fflush( stream );
+  }
+
+  // if( full_string            != NULL ) free( full_string    );
+  if( message != NULL ) free( message );
+
 }
 
-// syncronizable option fprintf with rank prefix
-void syncable_fprintf( const bool syncronize, FILE* stream, const char* format, ... ){
+// synchronizable option fprintf with rank prefix
+void syncable_fprintf( const bool synchronize, FILE* stream, const char* format, ... ){
   va_list args;
   va_start( args, format );
-  syncable_vfprintf( syncronize, stream, format, args );
+  syncable_vfprintf( synchronize, stream, format, args );
   va_end( args );
 }
 
-// unsyncronized fprintf with rank prefix
+// unsynchronized fprintf with rank prefix
 void unsync_fprintf( FILE* stream, const char* format, ... ){
   va_list args;
   va_start( args, format );
@@ -481,7 +761,7 @@ void unsync_fprintf( FILE* stream, const char* format, ... ){
   va_end( args );
 }
 
-// unsyncronized printf with rank prefix
+// unsynchronized printf with rank prefix
 void unsync_printf( const char* format, ... ){
   va_list args;
   va_start( args, format );
@@ -489,7 +769,7 @@ void unsync_printf( const char* format, ... ){
   va_end( args );
 }
 
-// syncronized fprintf with rank prefix
+// synchronized fprintf with rank prefix
 void sync_fprintf( FILE* stream, const char* format, ... ){
   va_list args;
   va_start( args, format );
@@ -497,7 +777,7 @@ void sync_fprintf( FILE* stream, const char* format, ... ){
   va_end( args );
 }
 
-// syncronized printf with rank prefix
+// synchronized printf with rank prefix
 void sync_printf( const char* format, ... ){
   va_list args;
   va_start( args, format );
@@ -505,7 +785,7 @@ void sync_printf( const char* format, ... ){
   va_end( args );
 }
 
-// primary only syncronized fprintf with rank prefix
+// primary only synchronized fprintf with rank prefix
 void primary_sync_fprintf( FILE* stream, const char* format, ... ){
   va_list args;
   va_start( args, format );
@@ -517,7 +797,7 @@ void primary_sync_fprintf( FILE* stream, const char* format, ... ){
   va_end( args );
 }
 
-// primary only syncronized printf with rank prefix
+// primary only synchronized printf with rank prefix
 void primary_sync_printf( const char* format, ... ){
   va_list args;
   va_start( args, format );
@@ -529,7 +809,7 @@ void primary_sync_printf( const char* format, ... ){
   va_end( args );
 }
 
-// primary only unsyncronized fprintf with rank prefix
+// primary only unsynchronized fprintf with rank prefix
 void primary_unsync_fprintf( FILE* stream, const char* format, ... ){
   va_list args;
   va_start( args, format );
@@ -541,7 +821,7 @@ void primary_unsync_fprintf( FILE* stream, const char* format, ... ){
   va_end( args );
 }
 
-// primary only unsyncronized printf with rank prefix
+// primary only unsynchronized printf with rank prefix
 void primary_unsync_printf( const char* format, ... ){
   va_list args;
   va_start( args, format );
@@ -731,6 +1011,7 @@ void in_place_stencilize_local_array( double* array, size_t n_elts ){
     //       There should be no reason to need any scheduling causes here.
     #pragma omp parallel for
     for( size_t i = 0; i < n_elts; ++i ){
+      sync_printf( "Doing %d\n", i );
       double min_val, max_val;
       if( i == 0 ){
         max_val = max2( array[0], array[1] );
@@ -794,7 +1075,7 @@ void in_place_stencilize_distributed_array( distributed_array* distributed_array
   };
 
   // Second, setup async communicate with neighboring ranks (no rotating, ends of array do not send/recieve in on the high/low end)
-  // TODO: should there be an option to syncronize before computing?
+  // TODO: should there be an option to synchronize before computing?
 
   // Send/Recieve request handles
   MPI_Request send_requests[2];
@@ -841,8 +1122,8 @@ void in_place_stencilize_distributed_array( distributed_array* distributed_array
   }
 
   // Third, perform local stencilization
-  // NOTE: This happens in parallel with the send.
-  // TODO: should there be an option to syncronize before computing?
+  // Note: This happens in parallel with the send.
+  // TODO: should there be an option to synchronize before computing?
   in_place_stencilize_local_array( distributed_array->local_array, distributed_array->local_elts );
 
   // Fourth, complete recieves
@@ -878,7 +1159,7 @@ void in_place_stencilize_distributed_array( distributed_array* distributed_array
   }
 
   // Done
-  if( global_program_context.syncronize_at_end_of_distributed_array_operations ){
+  if( global_program_context.synchronize_at_end_of_distributed_array_operations ){
     MPI_Barrier( global_program_context.comm );
   }
 }
@@ -938,9 +1219,9 @@ double sum_distributed_array( distributed_array* distributed_array ){
     free( all_sums );
   }
 
-  if( global_program_context.syncronize_at_end_of_distributed_array_operations ){
+  if( global_program_context.synchronize_at_end_of_distributed_array_operations ){
     // Thought about doing a Bcast of sum here, but I imagine that this is not
-    // as "ineffecient" as the spirit of this syncronization option would want.
+    // as "ineffecient" as the spirit of this synchronization option would want.
     MPI_Barrier( global_program_context.comm );
   }
 
@@ -975,7 +1256,7 @@ int main( int argc, char** argv ){
   // Note: the expression (true | (int)sum) is a trick to force the not optimize
   // the reduce_distributed_array call to be under this conditional, thus
   // allowing us to run performance tests without any of the overhead of the
-  // syncronized print-statements
+  // synchronized print-statements
   if( global_program_context.verbosity >= verbosity_less )
     primary_unsync_printf( "Sum: %f\n", sum );
 
