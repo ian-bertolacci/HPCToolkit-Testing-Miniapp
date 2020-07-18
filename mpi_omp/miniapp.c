@@ -77,7 +77,7 @@ typedef struct {
   const bool initialized;
 
   const int N;
-  const bool wait_on_non_collective_distiributed_array_operations;
+  const bool syncronize_at_end_of_distributed_array_operations;
   const verbosity_t verbosity;
   const distribution_type_t distribution_type;
 
@@ -150,7 +150,7 @@ program_context_t program_init( int argc, char** argv ){
   int omp_num_threads = default_omp_num_threads;
   omp_sched_t omp_schedule = default_omp_schedule;
   int omp_chunk_size = default_omp_chunk_size;
-  bool wait_on_non_collective_distiributed_array_operations = default_wait_on_non_collective_distiributed_array_operations;
+  bool syncronize_at_end_of_distributed_array_operations = default_wait_on_non_collective_distiributed_array_operations;
 
   char* usage_fmt_string = \
     "    -h"
@@ -275,7 +275,7 @@ program_context_t program_init( int argc, char** argv ){
       break;
 
       case 'w': {
-        wait_on_non_collective_distiributed_array_operations = true;
+        syncronize_at_end_of_distributed_array_operations = true;
       }
       break;
 
@@ -388,7 +388,7 @@ program_context_t program_init( int argc, char** argv ){
     .initialized           = true,
 
     .N                     = N,
-    .wait_on_non_collective_distiributed_array_operations = wait_on_non_collective_distiributed_array_operations,
+    .syncronize_at_end_of_distributed_array_operations = syncronize_at_end_of_distributed_array_operations,
     .verbosity             = verbosity,
     .distribution_type     = distribution_type,
     .iteration_order_type  = iteration_order_type,
@@ -439,7 +439,7 @@ void syncable_vfprintf( const bool syncronize, FILE* stream, const char* format,
                          + vsnprintf( NULL, 0, format, args_copy_for_len );
 
       // Allocate space for full output string
-      full_string = (char*) calloc( total_size + 1, sizeof(char) );
+      full_string = (char*) malloc( (total_size + 1) * sizeof(char) );
 
       // format string in parts
       ssize_t offset = 0;
@@ -650,7 +650,7 @@ size_t* create_local_indirection_array( size_t size ){
   // One of the indirection orderings
   if(  global_program_context.iteration_order_type == iteration_order_ascending_indirect_order
     || global_program_context.iteration_order_type == iteration_order_random_order ) {
-    indirection_array = (size_t*) calloc( size, sizeof(size_t) );
+    indirection_array = (size_t*) malloc( size * sizeof(size_t) );
     // Fill indirection array with
     // Note: this does not *need* to be parallel but hey whatever.
     #pragma omp parallel for
@@ -724,7 +724,7 @@ void init_distributed_array( distributed_array* distributed_array ){
 
 // "Stencilize" a local array in parallel
 void in_place_stencilize_local_array( double* array, size_t n_elts ){
-  double* update_array = (double*) calloc( n_elts, sizeof(double) );
+  double* update_array = (double*) malloc( n_elts * sizeof(double) );
 
   if( global_program_context.iteration_order_type == iteration_order_regular_order ){
     // Note: Schedule and chunk-size were set at program init.
@@ -871,12 +871,14 @@ void in_place_stencilize_distributed_array( distributed_array* distributed_array
   }
 
   // Sixth, wait on sends just because
+  // I'm 99% sure this is unnecessary, especially since there is no error
+  // handling here.
   for( size_t send_i = 0; send_i < n_sends; ++send_i ){
     MPI_Wait( &send_requests[send_i], NULL );
   }
 
   // Done
-  if( global_program_context.wait_on_non_collective_distiributed_array_operations ){
+  if( global_program_context.syncronize_at_end_of_distributed_array_operations ){
     MPI_Barrier( global_program_context.comm );
   }
 }
@@ -917,7 +919,7 @@ double sum_distributed_array( distributed_array* distributed_array ){
 
   // Only allocate/free on primary
   if( global_program_context.rank == global_program_context.primary_rank ){
-    all_sums = (double*) malloc( global_program_context.n_ranks*sizeof(double) );
+    all_sums = (double*) malloc( global_program_context.n_ranks * sizeof(double) );
   }
 
   // Perform reduction on local portion of array
@@ -936,7 +938,9 @@ double sum_distributed_array( distributed_array* distributed_array ){
     free( all_sums );
   }
 
-  if( global_program_context.wait_on_non_collective_distiributed_array_operations ){
+  if( global_program_context.syncronize_at_end_of_distributed_array_operations ){
+    // Thought about doing a Bcast of sum here, but I imagine that this is not
+    // as "ineffecient" as the spirit of this syncronization option would want.
     MPI_Barrier( global_program_context.comm );
   }
 
