@@ -619,7 +619,7 @@ void in_place_stencilize_local_array( double* array, size_t n_elts ){
     //       There should be no reason to need any scheduling causes here.
     #pragma omp parallel for
     for( size_t i = 0; i < n_elts; ++i ){
-      double min_val, max_val;
+      double max_val, min_val;
       if( i == 0 ){
         max_val = max2( array[0], array[1] );
         min_val = min2( array[0], array[1] );
@@ -631,7 +631,8 @@ void in_place_stencilize_local_array( double* array, size_t n_elts ){
         min_val = min3( array[i-1], array[i], array[i+1] );
       }
 
-      update_array[i] =  max_val / (1 + min_val );
+      update_array[i] =  max_val / (1 + abs(min_val) );
+
     }
   }
   // One of the indirection orderings
@@ -643,7 +644,7 @@ void in_place_stencilize_local_array( double* array, size_t n_elts ){
      for( size_t indirect_i = 0 ; indirect_i < n_elts; ++indirect_i ){
        size_t i = indirection_array[indirect_i];
 
-       double min_val, max_val;
+       double max_val, min_val;
        if( i == 0 ){
          max_val = max2( array[0], array[1] );
          min_val = min2( array[0], array[1] );
@@ -655,7 +656,7 @@ void in_place_stencilize_local_array( double* array, size_t n_elts ){
          min_val = min3( array[i-1], array[i], array[i+1] );
        }
 
-       update_array[i] =  max_val / (1 + min_val );
+       update_array[i] =  max_val / (1 + abs(min_val) );
      }
 
      free( indirection_array );
@@ -733,6 +734,7 @@ void in_place_stencilize_distributed_array( distributed_array* distributed_array
   // TODO: should there be an option to synchronize before computing?
   in_place_stencilize_local_array( distributed_array->local_array, distributed_array->local_elts );
 
+
   // Fourth, complete recieves
   // Note: do not need to wait on sends to complete because not writing to
   //       index the send is copying from
@@ -742,20 +744,22 @@ void in_place_stencilize_distributed_array( distributed_array* distributed_array
     MPI_Wait( &recv_requests[recv_i], NULL );
   }
 
+
   // Fifth, compute ends
   // Compute low side
   if( global_program_context.rank != 0 ){
-    double min_val = min3( end_0_neighborhood[0], end_0_neighborhood[1], end_0_neighborhood[2] );
     double max_val = max3( end_0_neighborhood[0], end_0_neighborhood[1], end_0_neighborhood[2] );
+    double min_val = min3( end_0_neighborhood[0], end_0_neighborhood[1], end_0_neighborhood[2] );
 
-    distributed_array->local_array[0] = max_val / (1 + abs(min_val));
+    distributed_array->local_array[0] =  max_val / (1 + abs(min_val) );
   }
+
   // Compute high side
   if( global_program_context.rank != global_program_context.n_ranks - 1 ){
-    double min_val = min3( end_n_neighborhood[0], end_n_neighborhood[1], end_n_neighborhood[2] );
     double max_val = max3( end_n_neighborhood[0], end_n_neighborhood[1], end_n_neighborhood[2] );
+    double min_val = min3( end_n_neighborhood[0], end_n_neighborhood[1], end_n_neighborhood[2] );
 
-    distributed_array->local_array[distributed_array->local_elts - 1] = max_val / (1 + abs(min_val));
+    distributed_array->local_array[distributed_array->local_elts - 1] =  max_val / (1 + abs(min_val) );
   }
 
   // Sixth, wait on sends just because
@@ -861,9 +865,7 @@ int main( int argc, char** argv ){
 
   // Print reduction value
   // Note: the expression (true | (int)sum) is a trick to force the not optimize
-  // the reduce_distributed_array call to be under this conditional, thus
-  // allowing us to run performance tests without any of the overhead of the
-  // synchronized print-statements
+  // the reduce_distributed_array call to be under this conditional.
   if( global_program_context.verbosity >= verbosity_less && (true | (int) sum) ){
     if( global_program_context.rank == global_program_context.primary_rank ){
       printf( "Sum: %f\n", sum );
