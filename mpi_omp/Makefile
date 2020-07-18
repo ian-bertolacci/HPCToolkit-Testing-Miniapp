@@ -15,7 +15,7 @@ OMP_NUM_THREADS?=2
 TEST_NUM_ELEMENTS?=1000
 
 HPC_TRACE?=yes
-HPC_DATABASE_METRIC_DB?=yes
+HPC_DATABASE_METRIC_DB?=no
 
 HPC_RUN_EVENTS ?= CPUTIME@1
 
@@ -45,10 +45,16 @@ else
 endif
 
 HPC_STRUCT=$(EXE).hpcstruct
-HPC_MEASUREMENTS=$(EXE)_procs-$(TEST_MPI_PROCESSES)_threads-$(OMP_NUM_THREADS)_n-elts-$(TEST_NUM_ELEMENTS)_trace-$(HPC_TRACE)_$(hpc_run_events_name).hpcmeasurements
-HPC_DATABASE=$(EXE)_procs-$(TEST_MPI_PROCESSES)_threads-$(OMP_NUM_THREADS)_n-elts-$(TEST_NUM_ELEMENTS)_trace-$(HPC_TRACE)_$(hpc_run_events_name)_metric-db-$(HPC_DATABASE_METRIC_DB).hpcdatabase
 
-all: analyze
+HPC_FAIR_MEASUREMENTS = $(EXE)_fair_procs-$(TEST_MPI_PROCESSES)_threads-$(OMP_NUM_THREADS)_n-elts-$(TEST_NUM_ELEMENTS)_trace-$(HPC_TRACE)_$(hpc_run_events_name).hpcmeasurements
+HPC_FAIR_DATABASE     = $(EXE)_fair_procs-$(TEST_MPI_PROCESSES)_threads-$(OMP_NUM_THREADS)_n-elts-$(TEST_NUM_ELEMENTS)_trace-$(HPC_TRACE)_$(hpc_run_events_name)_metric-db-$(HPC_DATABASE_METRIC_DB).hpcdatabase
+
+HPC_UNFAIR_MEASUREMENTS = $(EXE)_unfair_procs-$(TEST_MPI_PROCESSES)_threads-$(OMP_NUM_THREADS)_n-elts-$(TEST_NUM_ELEMENTS)_trace-$(HPC_TRACE)_$(hpc_run_events_name).hpcmeasurements
+HPC_UNFAIR_DATABASE     = $(EXE)_unfair_procs-$(TEST_MPI_PROCESSES)_threads-$(OMP_NUM_THREADS)_n-elts-$(TEST_NUM_ELEMENTS)_trace-$(HPC_TRACE)_$(hpc_run_events_name)_metric-db-$(HPC_DATABASE_METRIC_DB).hpcdatabase
+
+HPC_MEASUREMENTS = $(HPC_FAIR_MEASUREMENTS) $(HPC_UNFAIR_MEASUREMENTS)
+HPC_DATABASES = $(HPC_FAIR_DATABASE) $(HPC_UNFAIR_DATABASE)
+
 
 # Phoney dependencies
 # Build miniapp executable
@@ -58,39 +64,33 @@ build: $(EXE)
 run: $(HPC_MEASUREMENTS)
 
 # Create HPCToolkit profile database
-analyze: $(HPC_STRUCT) $(HPC_MEASUREMENTS) $(HPC_DATABASE)
+analyze: $(HPC_STRUCT) $(HPC_MEASUREMENTS) $(HPC_DATABASES)
 analyse: analyze
 analysis: analyze
 
-# View profile with hpcviewer
-viewprofile: $(HPC_DATABASE)
-	hpcviewer $(HPC_DATABASE) &
-
-# View trace with hpctraceviewer
-viewtrace: $(HPC_DATABASE)
-	hpctraceviewer $(HPC_DATABASE) &
-
-# View both profile and traice with hpcviewer and hpctraceviewer respectively
-viewall: $(HPC_DATABASE)
-	hpcviewer $(HPC_DATABASE) &
-	hpctraceviewer $(HPC_DATABASE) &
+all: analyze
 
 # Real dependencies
 # Build executable
 $(EXE):%:%.c
 	$(CC) $^ -o $@ $(CC_FLAGS)
 
-# Run app with hpcrun to create measurements file (HPC_MEASUREMENTS)
-$(HPC_MEASUREMENTS): $(EXE)
-	$(MPISPWAN) --oversubscribe -np $(TEST_MPI_PROCESSES) $(HPCRUN) $(hpcrun_trace_arg) $(hpc_run_events_arg) -o $@ ./$(EXE) $(TEST_NUM_ELEMENTS)
+# Run app with hpcrun to create measurements file
+# The fair run
+$(HPC_FAIR_MEASUREMENTS): $(EXE)
+	$(MPISPWAN) --oversubscribe -np $(TEST_MPI_PROCESSES) $(HPCRUN) $(hpcrun_trace_arg) $(hpc_run_events_arg) -o $@ ./$(EXE) -n $(TEST_NUM_ELEMENTS) -q -d unfair
+
+# The unfair run
+$(HPC_UNFAIR_MEASUREMENTS): $(EXE)
+	$(MPISPWAN) --oversubscribe -np $(TEST_MPI_PROCESSES) $(HPCRUN) $(hpcrun_trace_arg) $(hpc_run_events_arg) -o $@ ./$(EXE) -n $(TEST_NUM_ELEMENTS) -q -d fair
 
 # Inspect executable
 $(HPC_STRUCT): $(EXE)
 	$(HPCSTRUCT) $(EXE) -o $@
 
 # Create database from struct file (analysis of executable) and source analysis
-$(HPC_DATABASE): $(HPC_STRUCT) $(HPC_MEASUREMENTS)
-	$(HPCPROF) -S $(HPC_STRUCT) -I ./+ $(HPC_MEASUREMENTS) --metric-db $(HPC_DATABASE_METRIC_DB) -o $@
+%_metric-db-$(HPC_DATABASE_METRIC_DB).hpcdatabase: %.hpcmeasurements $(HPC_STRUCT)
+	$(HPCPROF) -S $(HPC_STRUCT) -I ./+ $< --metric-db $(HPC_DATABASE_METRIC_DB) -o $@
 
 # Cleaning
 clean: clean-profile clean-bin
