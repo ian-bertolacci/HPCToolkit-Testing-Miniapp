@@ -48,7 +48,39 @@ typedef struct {
   double* local_array;
   size_t local_elts, total_elts;
   size_t global_offset; // Index in global array that is locally index 0
+  size_t n_indirection_arrays; // total number of local indirection arrays
+  size_t indirection_array_next; // which indirection array to use next
+  size_t** indirection_arrays; // array of indirection arrays
 } distributed_array;
+
+// Macro for iterating over distributed array
+// ptr_distributed_array: (distributed_array_t*)
+// iterator: symbol
+// body: statement list
+// Note: the for loop is the first 'line', so that openmp can be used on it.
+#define distributed_array_local_for( ptr_distributed_array, iterator, body )  \
+  for(                                                                        \
+    size_t iterator ## idx = 0;                                               \
+    iterator ## idx < (ptr_distributed_array)->local_elts;                    \
+    ++ iterator ## idx                                                        \
+  ){                                                                          \
+    size_t iterator;                                                          \
+    if( ptr_distributed_array->indirection_arrays != NULL ){                  \
+      iterator = ptr_distributed_array->indirection_arrays[ptr_distributed_array->indirection_array_next][iterator ## idx]; \
+    } else {                                                                  \
+      iterator = iterator ## idx;                                             \
+    }                                                                         \
+    {                                                                         \
+      body                                                                    \
+    }                                                                         \
+  }                                                                           \
+  if( ptr_distributed_array->indirection_arrays != NULL ){                    \
+    (ptr_distributed_array)->indirection_array_next = ((ptr_distributed_array)->indirection_array_next == (ptr_distributed_array)->n_indirection_arrays - 1 ) ? \
+                                                        0     \
+                                                      : ((ptr_distributed_array)->indirection_array_next + 1);  \
+  }
+
+
 
 typedef enum {
   distribute_fair,
@@ -56,10 +88,15 @@ typedef enum {
 } distribution_type_t;
 
 typedef enum {
-  iteration_order_regular_order,
-  iteration_order_ascending_indirect_order,
-  iteration_order_random_order,
+  iteration_order_regular_order             = 0,
+  iteration_order_ascending_indirect_order  = (1 << 0) | 1,
+  iteration_order_random_order              = (2 << 1) | 1,
 } iteration_order_type_t;
+
+// iteration_order_type_t will have bit 0 set if using some indirection
+inline bool is_iteration_order_indirect( const iteration_order_type_t iteration_order_type ){
+  return ( iteration_order_type & 1 ) != 0;
+}
 
 
 typedef enum {
@@ -77,6 +114,7 @@ typedef struct {
   const bool initialized;
 
   const int N;
+  const int iterations;
   const bool synchronize_at_end_of_distributed_array_operations;
   const verbosity_t verbosity;
   const distribution_type_t distribution_type;
@@ -86,9 +124,6 @@ typedef struct {
   const iteration_order_type_t iteration_order_type;
   const omp_sched_t omp_loop_schedule;
   const int omp_chunk_size;
-
-  int omp_print_state;
-  omp_lock_t lock;
 
   const int seed;
 } program_context_t;
@@ -137,6 +172,7 @@ program_context_t program_init( int argc, char** argv ){
 
   // Default argument values
   const int default_N = 10;
+  const int default_iterations = 1000;
   const verbosity_t default_verbosity = verbosity_normal;
   const int default_iteration_order = iteration_order_regular_order;
   const int default_omp_num_threads = initial_system_omp_threads;
@@ -147,6 +183,7 @@ program_context_t program_init( int argc, char** argv ){
 
   // Arguments set with default values, possibly overwritten by flags
   int N = default_N;
+  int iterations = default_iterations;
   verbosity_t verbosity = default_verbosity;
   distribution_type_t distribution_type = distribute_fair;
   iteration_order_type_t iteration_order_type = default_iteration_order;
@@ -158,29 +195,14 @@ program_context_t program_init( int argc, char** argv ){
   char* usage_fmt_string = \
     "    -h"
     "        Print this message and exit.\n\n"
-    "    -v <string or int>\n"
-    "        Set verbosity level.\n"
-    "        Values:\n"
-    "          \"normal\" : Show standard messages.\n"
-    "          \"more\"   : Show standard messages and some debugging info.\n"
-    "          \"less\"   : Only show very important messages.\n"
-    "          \"errors\" : Only show error messages.\n"
-    "          \"debug\"  : Show standard messages and standard debugging info.\n"
-    "          \"all\"    : Show all messages.\n"
-    "          <int>      : Set to some priority integer value.\n"
-    "        Default: \"normal\"\n\n"
-    "    -q\n"
-    "        Set verbosity to quiet (equivalent to -v \"less\").\n\n"
-    "    -s\n"
-    "        Set verbosity to silent (equivalent to -v \"errors\").\n\n"
     "    -N <unsigned int>\n"
     "        Set number of elements in distributed array.\n"
     "        Default: %d\n\n"
+    "    -i <unsigned int>\n"
+    "        Set number of iterations to perform.\n"
+    "        Default: %d\n\n"
     "    -n <unsigned int>\n"
     "        Equivalent to -N <unsigned int>\n\n"
-    "    -t <unsigned int>\n"
-    "        Set number of OpenMP threads.\n"
-    "        Default: %d (system default)\n\n"
     "    -d <distribution type>\n"
     "        Set type of distribution for elements of distributed array.\n"
     "        Values:\n"
@@ -188,6 +210,9 @@ program_context_t program_init( int argc, char** argv ){
     "          \"unfair\" : Distribute values unfairly.\n\n"
     "    -w \n"
     "        Force ranks to synchronize at each distributed array opperation.\n\n"
+    "    -t <unsigned int>\n"
+    "        Set number of OpenMP threads.\n"
+    "        Default: %d (system default)\n\n"
     "    -l <OpenMP schedule name>\n"
     "        Set OpenMP loop schedule.\n"
     "        Values:\n"
@@ -207,13 +232,112 @@ program_context_t program_init( int argc, char** argv ){
     "          \"default\"  : Iterate over indices in the default implementation order.\n"
     "          \"indirect\" : Iterate over indices in ascending order (ignoring parallelism order) though an indirection array.\n"
     "          \"random\"   : Iterate over indices in random order through an indirection array.\n"
-    "        Default : \"default\"\n\n";
+    "        Default : \"default\"\n\n"
+    "    -v <string or int>\n"
+    "        Set verbosity level.\n"
+    "        Values:\n"
+    "          \"normal\" : Show standard messages.\n"
+    "          \"more\"   : Show standard messages and some debugging info.\n"
+    "          \"less\"   : Only show very important messages.\n"
+    "          \"errors\" : Only show error messages.\n"
+    "          \"debug\"  : Show standard messages and standard debugging info.\n"
+    "          \"all\"    : Show all messages.\n"
+    "          <int>      : Set to some priority integer value.\n"
+    "        Default: \"normal\"\n\n"
+    "    -q\n"
+    "        Set verbosity to quiet (equivalent to -v \"less\").\n\n"
+    "    -s\n"
+    "        Set verbosity to silent (equivalent to -v \"errors\").\n\n";
 
-  char* options = "hv:qsN:n:d:wt:l:c:o:";
+  #define print_help_error(flag,argument) { \
+    fprintf( stderr, "Error: invalid value for -%c: %s\n", flag_char, optarg ); \
+    fprintf( stderr, usage_fmt_string, default_N, default_iterations, default_omp_num_threads, default_omp_chunk_size ); \
+    exit(-1); \
+  }
+
+  char* options = "hN:n:i:d:wt:l:c:o:v:qs";
   char flag_char;
   opterr = 0;
   while( ( flag_char = getopt( argc, argv, options ) ) != -1 ){
     switch( flag_char ) {
+      case 'N':
+      case 'n': {
+        if( isunsignedinteger( optarg ) ){
+          N = atoi( optarg );
+        } else {
+          print_help_error( flag_char, optarg );
+        }
+      }
+      break;
+
+      case 'i': {
+        if( isunsignedinteger( optarg ) ){
+          iterations = atoi( optarg );
+        } else {
+          print_help_error( flag_char, optarg );
+        }
+      }
+      break;
+
+
+      case 'd': {
+        // Do all string comparisons
+        if(      strcmp( "fair",   optarg ) == 0 ) distribution_type = distribute_fair;
+        else if( strcmp( "unfair", optarg ) == 0 ) distribution_type = distribute_unfair;
+        else {
+          print_help_error( flag_char, optarg );
+        }
+      }
+      break;
+
+      case 'w': {
+        synchronize_at_end_of_distributed_array_operations = true;
+      }
+      break;
+
+      case 't': {
+        if( isunsignedinteger( optarg ) ){
+          omp_num_threads = atoi( optarg );
+        } else {
+          print_help_error( flag_char, optarg );
+        }
+      }
+      break;
+
+      case 'l': {
+        // Do all string comparisons
+        if(      strcmp( "default", optarg ) == 0 ) omp_schedule = default_omp_schedule;
+        else if( strcmp( "static",  optarg ) == 0 ) omp_schedule = omp_sched_static;
+        else if( strcmp( "dynamic", optarg ) == 0 ) omp_schedule = omp_sched_dynamic;
+        else if( strcmp( "guided",  optarg ) == 0 ) omp_schedule = omp_sched_guided;
+        else if( strcmp( "auto",    optarg ) == 0 ) omp_schedule = omp_sched_auto;
+        else {
+          print_help_error( flag_char, optarg );
+        }
+      }
+      break;
+
+      case 'c': {
+        // Check that all characters in string are a integer digits
+        if( isunsignedinteger( optarg ) ){
+          omp_chunk_size = atoi( optarg );
+        } else {
+          print_help_error( flag_char, optarg );
+        }
+      }
+      break;
+
+      case 'o': {
+        // Do all string comparisons
+        if(      strcmp( "default",  optarg ) == 0 ) iteration_order_type = iteration_order_regular_order;
+        else if( strcmp( "indirect", optarg ) == 0 ) iteration_order_type = iteration_order_ascending_indirect_order;
+        else if( strcmp( "random",   optarg ) == 0 ) iteration_order_type = iteration_order_random_order;
+        else {
+          print_help_error( flag_char, optarg );
+        }
+      }
+      break;
+
       case 'h': {
         printf( usage_fmt_string, default_N, default_omp_num_threads, default_omp_chunk_size );
         exit(-1);
@@ -235,9 +359,7 @@ program_context_t program_init( int argc, char** argv ){
           if( isinteger( optarg ) ){
             verbosity = atoi( optarg );
           } else {
-            fprintf( stderr, "Error: invalid value for -%c: %s\n", flag_char, optarg );
-            fprintf( stderr, usage_fmt_string, default_N, default_omp_num_threads, default_omp_chunk_size );
-            exit(-1);
+            print_help_error( flag_char, optarg );
           }
         }
       }
@@ -252,87 +374,6 @@ program_context_t program_init( int argc, char** argv ){
         verbosity = verbosity_errors;
       }
       break;
-
-      case 'N':
-      case 'n': {
-        if( isunsignedinteger( optarg ) ){
-          N = atoi( optarg );
-        } else {
-          fprintf( stderr, "Error: invalid value for -%c: %s\n", flag_char, optarg );
-          fprintf( stderr, usage_fmt_string, default_N, default_omp_num_threads, default_omp_chunk_size );
-          exit(-1);
-        }
-      }
-      break;
-
-      case 'd': {
-        // Do all string comparisons
-        if(      strcmp( "fair",   optarg ) == 0 ) distribution_type = distribute_fair;
-        else if( strcmp( "unfair", optarg ) == 0 ) distribution_type = distribute_unfair;
-        else {
-          fprintf( stderr, "Error: invalid value for -%c: %s\n", flag_char, optarg );
-          fprintf( stderr, usage_fmt_string, default_N, default_omp_num_threads, default_omp_chunk_size );
-          exit(-1);
-        }
-      }
-      break;
-
-      case 'w': {
-        synchronize_at_end_of_distributed_array_operations = true;
-      }
-      break;
-
-      case 't': {
-        if( isunsignedinteger( optarg ) ){
-          omp_num_threads = atoi( optarg );
-        } else {
-          fprintf( stderr, "Error: invalid value for -%c: %s\n", flag_char, optarg );
-          fprintf( stderr, usage_fmt_string, default_N, default_omp_num_threads, default_omp_chunk_size );
-          exit(-1);
-        }
-      }
-      break;
-
-      case 'l': {
-        // Do all string comparisons
-        if(      strcmp( "default", optarg ) == 0 ) omp_schedule = default_omp_schedule;
-        else if( strcmp( "static",  optarg ) == 0 ) omp_schedule = omp_sched_static;
-        else if( strcmp( "dynamic", optarg ) == 0 ) omp_schedule = omp_sched_dynamic;
-        else if( strcmp( "guided",  optarg ) == 0 ) omp_schedule = omp_sched_guided;
-        else if( strcmp( "auto",    optarg ) == 0 ) omp_schedule = omp_sched_auto;
-        else {
-          fprintf( stderr, "Error: invalid value for -%c: %s\n", flag_char, optarg );
-          fprintf( stderr, usage_fmt_string, default_N, default_omp_num_threads, default_omp_chunk_size );
-          exit(-1);
-        }
-      }
-      break;
-
-      case 'c': {
-        // Check that all characters in string are a integer digits
-        if( isunsignedinteger( optarg ) ){
-          omp_chunk_size = atoi( optarg );
-        } else {
-          printf( "Error: invalid value for -%c: %s\n", flag_char, optarg );
-          printf( usage_fmt_string, default_N, default_omp_num_threads, default_omp_chunk_size );
-          exit(-1);
-        }
-      }
-      break;
-
-      case 'o': {
-        // Do all string comparisons
-        if(      strcmp( "default",  optarg ) == 0 ) iteration_order_type = iteration_order_regular_order;
-        else if( strcmp( "indirect", optarg ) == 0 ) iteration_order_type = iteration_order_ascending_indirect_order;
-        else if( strcmp( "random",   optarg ) == 0 ) iteration_order_type = iteration_order_random_order;
-        else {
-          fprintf( stderr, "Error: invalid value for -%c: %s\n", flag_char, optarg );
-          fprintf( stderr, usage_fmt_string, default_N, default_omp_num_threads, default_omp_chunk_size );
-          exit(-1);
-        }
-      }
-      break;
-
 
       case '?': {
         char* option_ptr = strchr( options, optopt );
@@ -375,6 +416,8 @@ program_context_t program_init( int argc, char** argv ){
     } // switch
   } // while getopt
 
+  #undef print_help_error
+
   // Create get a new random number seed for this rank
   // initialize srand to something all ranks may have
   srand( time(NULL) );
@@ -392,6 +435,7 @@ program_context_t program_init( int argc, char** argv ){
     .initialized           = true,
 
     .N                     = N,
+    .iterations            = iterations,
     .synchronize_at_end_of_distributed_array_operations = synchronize_at_end_of_distributed_array_operations,
     .verbosity             = verbosity,
     .distribution_type     = distribution_type,
@@ -406,12 +450,8 @@ program_context_t program_init( int argc, char** argv ){
     .omp_loop_schedule     = omp_schedule,
     .omp_chunk_size        = omp_chunk_size,
 
-    .omp_print_state       = 0,
-
     .seed                  = rank_seed
   };
-
-  omp_init_lock( &(ret_obj.lock) );
 
   // I really want all members of program_context_t to be const,
   // So we memcpy it into place to force the overwrite.
@@ -429,16 +469,56 @@ program_context_t program_init( int argc, char** argv ){
 
   omp_set_num_threads( global_program_context.omp_num_threads );
 
-  #pragma omp single
-  {
-    if( ! omp_test_lock( &(global_program_context.lock) ) ){
-      fprintf( stderr, "Unable to acquire newly initialized OpenMP lock.\n" );
-      exit(-1);
-    }
-    omp_unset_lock( &(global_program_context.lock) );
-  }
-
   return ret_obj;
+}
+
+size_t* create_local_indirection_array( size_t size, iteration_order_type_t iteration_order_type  ){
+  size_t* indirection_array = NULL;
+
+  // One of the indirection orderings
+  if( is_iteration_order_indirect( iteration_order_type ) ) {
+    indirection_array = (size_t*) malloc( size * sizeof(size_t) );
+    // Fill indirection array with
+    // Note: this does not *need* to be parallel but hey whatever.
+    #pragma omp parallel for
+    for( size_t i = 0; i < size; ++i ){
+      indirection_array[i] = i;
+    }
+
+    // Random indirection order
+    // Note: Going through the motions of the randomization, but only do the
+    // value swap if order is random_order. This includes forcing *both* memory
+    // reads and writes to locations that where the source and destination are
+    // easily analysed to be the same, which requires the volatiles in order to
+    // force the compiler to always read and write the values, even if it's
+    // writing to the same place it read the value from originally and would
+    // have no effect.
+    // Todo: is swap passes enough? Too much?
+    const int swap_passes = 2;
+    for( int swap_pass = 0; swap_pass < swap_passes; swap_pass += 1 ){
+      for( int from = 0; from < size; ++from){
+        // choose another index that is different
+        int to;
+        while( (to = rand() % size) == from ){ }
+
+        // swap indexes
+        // Note: again, going through the motions. Need volatile pointer casting
+        // to force the reads *and* writes
+        size_t from_value =  ((size_t volatile*)indirection_array)[from];
+        size_t to_value   =  ((size_t volatile*)indirection_array)[to];
+
+        if( global_program_context.iteration_order_type == iteration_order_random_order ){
+          ((size_t volatile*)indirection_array)[from] = to_value;
+          ((size_t volatile*)indirection_array)[to]   = from_value;
+        } else {
+          ((size_t volatile*)indirection_array)[from] = from_value;
+          ((size_t volatile*)indirection_array)[to]   = to_value;
+        }
+      } // for from ...
+    } // for swap_pass
+  } // if global_program_context.iteration_order_type ...
+
+  return indirection_array;
 }
 
 // Construct distributed array
@@ -521,105 +601,76 @@ distributed_array allocate_distributed_array( size_t n_elts, distribution_type_t
 
   double* array = (double*) malloc( portion*sizeof(double) );
 
+  // Create all the indirection arrays
+  size_t** indirection_arrays = NULL;
+  int n_indirection_arrays = 0;
+  if( is_iteration_order_indirect( global_program_context.iteration_order_type ) ){
+    n_indirection_arrays = 3 ;
+    indirection_arrays = (size_t**) malloc( n_indirection_arrays*sizeof(size_t*) );
+    for( size_t i = 0; i < n_indirection_arrays; ++i ){
+      indirection_arrays[i] = create_local_indirection_array( portion, global_program_context.iteration_order_type );
+    }
+  }
+
   // Construct and return distributed_array structure
   distributed_array ret_obj = {
-    .local_array   = array,
-    .local_elts    = portion,
-    .total_elts    = n_elts,
-    .global_offset = offset
+    .local_array            = array,
+    .local_elts             = portion,
+    .total_elts             = n_elts,
+    .global_offset          = offset,
+    .n_indirection_arrays   = n_indirection_arrays,
+    .indirection_array_next = 0,
+    .indirection_arrays     = indirection_arrays
   };
 
   return ret_obj;
 }
 
-size_t* create_local_indirection_array( size_t size ){
-  size_t* indirection_array = NULL;
-
-  // One of the indirection orderings
-  if(  global_program_context.iteration_order_type == iteration_order_ascending_indirect_order
-    || global_program_context.iteration_order_type == iteration_order_random_order ) {
-    indirection_array = (size_t*) malloc( size * sizeof(size_t) );
-    // Fill indirection array with
-    // Note: this does not *need* to be parallel but hey whatever.
-    #pragma omp parallel for
-    for( size_t i = 0; i < size; ++i ){
-      indirection_array[i] = i;
+void free_distributed_array( distributed_array* distributed_array ){
+  free(distributed_array->local_array);
+  if( distributed_array->n_indirection_arrays > 0 ){
+    for( size_t i = 0; i < distributed_array->n_indirection_arrays; ++i ){
+      free( distributed_array->indirection_arrays[i] );
     }
-
-    // Random indirection order
-    // Note: Going through the motions of the randomization, but only do the
-    // value swap if order is random_order. This includes forcing *both* memory
-    // reads and writes to locations that where the source and destination are
-    // easily analysed to be the same, which requires the volatiles in order to
-    // force the compiler to always read and write the values, even if it's
-    // writing to the same place it read the value from originally and would
-    // have no effect.
-    // Todo: is swap passes enough? Too much?
-    const int swap_passes = 2;
-    for( int swap_pass = 0; swap_pass < swap_passes; swap_pass += 1 ){
-      for( int from = 0; from < size; ++from){
-        // choose another index that is different
-        int to;
-        while( (to = rand() % size) == from ){ }
-
-        // swap indexes
-        // Note: again, going through the motions. Need volatile pointer casting
-        // to force the reads *and* writes
-        size_t from_value =  ((size_t volatile*)indirection_array)[from];
-        size_t to_value   =  ((size_t volatile*)indirection_array)[to];
-
-        if( global_program_context.iteration_order_type == iteration_order_random_order ){
-          ((size_t volatile*)indirection_array)[from] = to_value;
-          ((size_t volatile*)indirection_array)[to]   = from_value;
-        } else {
-          ((size_t volatile*)indirection_array)[from] = from_value;
-          ((size_t volatile*)indirection_array)[to]   = to_value;
-        }
-      } // for from ...
-    } // for swap_pass
-  } // if global_program_context.iteration_order_type ...
-
-  return indirection_array;
+    free( distributed_array->indirection_arrays );
+  }
 }
 
 // Initialize distributed array with arbitrary values
 void init_distributed_array( distributed_array* distributed_array ){
-  // Regular ordering
-  if( global_program_context.iteration_order_type == iteration_order_regular_order ){
     // Note: Schedule and chunk-size were set at program init.
     //       There should be no reason to need any scheduling causes here.
     #pragma omp parallel for
-    for( size_t i = 0; i < distributed_array->local_elts; ++i ){
-      // Use global offset to create value for this local index
-      double j =  (i+1) + distributed_array->global_offset;
-      distributed_array->local_array[i] = sin( (j/distributed_array->total_elts) * 3.14159265358979323846 );
-    }
-  }
-  // One of the indirection orderings
-  else {
-     size_t* indirection_array = create_local_indirection_array( distributed_array->local_elts );
-     #pragma omp parallel for
-     for( size_t indirect_i = 0; indirect_i < distributed_array->local_elts; ++indirect_i ){
-       // Get index via indirection array
-       size_t i = indirection_array[indirect_i];
-       // Use global offset to create value for this local index
-       double j =  (i+1) + distributed_array->global_offset;
-       distributed_array->local_array[i] = sin( (j/distributed_array->total_elts) * 3.14159265358979323846 );
-     }
-     free( indirection_array );
-  }
+    distributed_array_local_for(
+      distributed_array,
+      i,
+      {
+        // Use global offset to create value for this local index
+        double j = (i+1) + distributed_array->global_offset;
+        distributed_array->local_array[i] = sin( (j/distributed_array->total_elts) * 3.14159265358979323846 );
+      }
+    );
 }
 
 // "Stencilize" a local array in parallel
-void in_place_stencilize_local_array( double* array, size_t n_elts ){
-  double* update_array = (double*) malloc( n_elts * sizeof(double) );
+void in_place_stencilize_local_array( distributed_array* distributed_array ){
+  // Array where updates are written to.
+  // At the end, this will become the new local array.
+  double* update_array = (double*) malloc( distributed_array->local_elts * sizeof(double) );
 
-  if( global_program_context.iteration_order_type == iteration_order_regular_order ){
-    // Note: Schedule and chunk-size were set at program init.
-    //       There should be no reason to need any scheduling causes here.
-    #pragma omp parallel for
-    for( size_t i = 0; i < n_elts; ++i ){
-      double max_val, min_val;
+  // Use these constants for less typing.
+  const double* const array = distributed_array->local_array;
+  const size_t n_elts = distributed_array->local_elts;
+
+  // Note: Schedule and chunk-size were set at program init.
+  //       There should be no reason to need any scheduling causes here.
+  #pragma omp parallel for
+  distributed_array_local_for(
+    distributed_array,
+    i,
+    {
+      double max_val;
+      double min_val;
       if( i == 0 ){
         max_val = max2( array[0], array[1] );
         min_val = min2( array[0], array[1] );
@@ -630,42 +681,14 @@ void in_place_stencilize_local_array( double* array, size_t n_elts ){
         max_val = max3( array[i-1], array[i], array[i+1] );
         min_val = min3( array[i-1], array[i], array[i+1] );
       }
-
       update_array[i] =  max_val / (1 + abs(min_val) );
-
     }
-  }
-  // One of the indirection orderings
-  else {
-     size_t* indirection_array = create_local_indirection_array( n_elts );
-     // Note: Schedule and chunk-size were set at program init.
-     //       There should be no reason to need any scheduling causes here.
-     #pragma omp parallel for
-     for( size_t indirect_i = 0 ; indirect_i < n_elts; ++indirect_i ){
-       size_t i = indirection_array[indirect_i];
+  );
 
-       double max_val, min_val;
-       if( i == 0 ){
-         max_val = max2( array[0], array[1] );
-         min_val = min2( array[0], array[1] );
-       } else if ( i == n_elts - 1 ){
-         max_val = max2( array[n_elts-2], array[n_elts-1] );
-         min_val = min2( array[n_elts-2], array[n_elts-1] );
-       } else {
-         max_val = max3( array[i-1], array[i], array[i+1] );
-         min_val = min3( array[i-1], array[i], array[i+1] );
-       }
-
-       update_array[i] =  max_val / (1 + abs(min_val) );
-     }
-
-     free( indirection_array );
-  }
-
-  // Overwrite array with updates
-  memcpy( array, update_array, n_elts*sizeof(double) );
-
-  free( update_array );
+  // Swap out old array with update array, free old array
+  double* previous_local_array = distributed_array->local_array;
+  distributed_array->local_array = update_array;
+  free( previous_local_array );
 }
 
 // Distributed-Parallel "Stencilize" a distributed array
@@ -732,7 +755,7 @@ void in_place_stencilize_distributed_array( distributed_array* distributed_array
   // Third, perform local stencilization
   // Note: This happens in parallel with the send.
   // TODO: should there be an option to synchronize before computing?
-  in_place_stencilize_local_array( distributed_array->local_array, distributed_array->local_elts );
+  in_place_stencilize_local_array( distributed_array );
 
 
   // Fourth, complete recieves
@@ -776,29 +799,19 @@ void in_place_stencilize_distributed_array( distributed_array* distributed_array
 }
 
 // Parallel sum a double array
-double sum_local_array( double* array, size_t n_elts ){
+double sum_local_array( distributed_array* distributed_array ){
   double rank_local_sum = 0.0;
 
-  if( global_program_context.iteration_order_type == iteration_order_regular_order ){
-    // Note: Schedule and chunk-size were set at program init.
-    //       There should be no reason to need any scheduling causes here.
-    #pragma omp parallel for reduction(+: rank_local_sum)
-    for( size_t i = 0 ; i < n_elts; ++i ){
-      rank_local_sum += array[i];
+  // Note: Schedule and chunk-size were set at program init.
+  //       There should be no reason to need any scheduling causes here.
+  #pragma omp parallel for reduction(+: rank_local_sum)
+  distributed_array_local_for(
+    distributed_array,
+    i,
+    {
+      rank_local_sum += distributed_array->local_array[i];
     }
-  }
-  // One of the indirection orderings
-  else {
-     size_t* indirection_array = create_local_indirection_array( n_elts );
-     // TODO: is this kosher?
-     #pragma omp parallel for reduction(+: rank_local_sum)
-     for( size_t indirect_i = 0; indirect_i < n_elts; ++indirect_i ){
-       // Get index via indirection array
-       size_t i = indirection_array[indirect_i];
-       rank_local_sum += array[i];
-     }
-     free( indirection_array );
-  }
+  );
 
   return rank_local_sum;
 }
@@ -815,7 +828,7 @@ double sum_distributed_array( distributed_array* distributed_array ){
   }
 
   // Perform reduction on local portion of array
-  double rank_local_sum = sum_local_array( distributed_array->local_array, distributed_array->local_elts );
+  double rank_local_sum = sum_local_array( distributed_array );
 
   // Gather all local reduction
   MPI_Gather( &rank_local_sum, 1, MPI_DOUBLE, all_sums, 1, MPI_DOUBLE, global_program_context.primary_rank, global_program_context.comm );
@@ -823,8 +836,10 @@ double sum_distributed_array( distributed_array* distributed_array ){
   // Primary computes final part of reduction locally
   double sum = 0.0;
   if( global_program_context.rank == global_program_context.primary_rank ){
-    // Compute parallel reduction (potential source of bad performance; small number of ranks)
-    sum = sum_local_array( all_sums, global_program_context.n_ranks );
+    // Local Sum
+    for( size_t i = 0; i < global_program_context.n_ranks; ++i ){
+      sum += all_sums[i];
+    }
 
     // Only allocate/free on primary
     free( all_sums );
@@ -840,10 +855,6 @@ double sum_distributed_array( distributed_array* distributed_array ){
   return  sum;
 }
 
-void free_distributed_array( distributed_array* distributed_array ){
-  free(distributed_array->local_array);
-}
-
 int main( int argc, char** argv ){
   // Initialize program
   program_init( argc, argv );
@@ -857,20 +868,31 @@ int main( int argc, char** argv ){
   // Initialize distributed array with arbitrary values
   init_distributed_array( &array );
 
-  // "Stencilize" distributed array
-  in_place_stencilize_distributed_array( &array );
+  double mean_sum = 0.0;
+  for( int iteration = 0; iteration < global_program_context.iterations; ++iteration ){
+    // "Stencilize" distributed array
+    in_place_stencilize_distributed_array( &array );
 
-  // sum distributed array
-  double sum = sum_distributed_array( &array );
+    // sum distributed array
+    double iteration_sum = sum_distributed_array( &array );
+    mean_sum += iteration_sum / global_program_context.iterations;
 
-  // Print reduction value
-  // Note: the expression (true | (int)sum) is a trick to force the not optimize
-  // the reduce_distributed_array call to be under this conditional.
-  if( global_program_context.verbosity >= verbosity_less && (true | (int) sum) ){
-    if( global_program_context.rank == global_program_context.primary_rank ){
-      printf( "Sum: %f\n", sum );
+    // Print reduction value
+    // Note: the expression (true | (int)sum) is a trick to force the not optimize
+    // the reduce_distributed_array call to be under this conditional.
+    if( global_program_context.verbosity >= verbosity_more && (true | (int) iteration_sum) ){
+      if( global_program_context.rank == global_program_context.primary_rank ){
+        printf( "Iteration %d sum: %f\n", iteration, iteration_sum );
+      }
     }
   }
+
+  if( global_program_context.verbosity >= verbosity_less ){
+    if( global_program_context.rank == global_program_context.primary_rank ){
+      printf( "Mean sum: %f\n", mean_sum );
+    }
+  }
+
 
   // Free distributed array
   free_distributed_array( &array );
