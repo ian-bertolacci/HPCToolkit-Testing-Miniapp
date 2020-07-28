@@ -745,7 +745,7 @@ void in_place_stencilize_distributed_array( distributed_array* distributed_array
 
     int recv_err = MPI_Irecv( &end_n_neighborhood[2], 1, MPI_DOUBLE, global_program_context.rank + 1, 0, global_program_context.comm, &recv_requests[n_recvs] );
     if( recv_err != MPI_SUCCESS ){
-       fprintf( stderr, "Error during end N MPI_Irecv call: %d", recv_err );
+      fprintf( stderr, "Error during end N MPI_Irecv call: %d", recv_err );
       exit(-1);
     }
 
@@ -859,11 +859,18 @@ int main( int argc, char** argv ){
   // Initialize program
   program_init( argc, argv );
 
+  // Print information about this execution
+  if( global_program_context.verbosity >= verbosity_normal && global_program_context.rank == global_program_context.primary_rank ){
+    printf( "Performing %d iterations of stencilize and sum over a distributed array with %d elements.\n", global_program_context.iterations, global_program_context.N );
+  }
+
   // Allocate distributed array
   distributed_array array = allocate_distributed_array( global_program_context.N, global_program_context.distribution_type );
+
   // Print information about ranks and array
-  if( global_program_context.verbosity >= verbosity_normal )
+  if( global_program_context.verbosity >= verbosity_normal ){
     printf( "Rank %d/%d with %d OpenMP threads owns %lu of %lu elements\n", global_program_context.rank, global_program_context.n_ranks, global_program_context.omp_num_threads, array.local_elts, array.total_elts  );
+  }
 
   // Initialize distributed array with arbitrary values
   init_distributed_array( &array );
@@ -880,19 +887,15 @@ int main( int argc, char** argv ){
     // Print reduction value
     // Note: the expression (true | (int)sum) is a trick to force the not optimize
     // the reduce_distributed_array call to be under this conditional.
-    if( global_program_context.verbosity >= verbosity_more && (true | (int) iteration_sum) ){
-      if( global_program_context.rank == global_program_context.primary_rank ){
-        printf( "Iteration %d sum: %f\n", iteration, iteration_sum );
-      }
+    if( global_program_context.verbosity >= verbosity_more && (true | (int) iteration_sum) && global_program_context.rank == global_program_context.primary_rank ){
+      printf( "Iteration %d sum: %f\n", iteration, iteration_sum );
     }
   }
 
-  if( global_program_context.verbosity >= verbosity_less ){
-    if( global_program_context.rank == global_program_context.primary_rank ){
-      printf( "Mean sum: %f\n", mean_sum );
-    }
+  // Print mean sum
+  if( global_program_context.verbosity >= verbosity_less && global_program_context.rank == global_program_context.primary_rank ){
+    printf( "Mean sum: %f\n", mean_sum );
   }
-
 
   // Free distributed array
   free_distributed_array( &array );
