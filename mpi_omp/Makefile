@@ -13,6 +13,7 @@ HPCPROF?=hpcprof
 TEST_MPI_PROCESSES?=4
 OMP_NUM_THREADS?=2
 TEST_NUM_ELEMENTS?=1000
+TEST_NUM_ITERATIONS?=1000
 
 HPC_TRACE?=yes
 HPC_DATABASE_METRIC_DB?=no
@@ -44,17 +45,18 @@ else
 	hpc_run_events_arg = -e $(shell echo $(HPC_RUN_EVENTS) | sed 's|[[:space:]]\+| -e |g')
 endif
 
+HPC_BASE_NAME=procs-$(TEST_MPI_PROCESSES)_threads-$(OMP_NUM_THREADS)_n-elts-$(TEST_NUM_ELEMENTS)_n-iters-$(TEST_NUM_ITERATIONS)_trace-$(HPC_TRACE)_$(hpc_run_events_name)
+
 HPC_STRUCT=$(EXE).hpcstruct
 
-HPC_FAIR_MEASUREMENTS = $(EXE)_fair_procs-$(TEST_MPI_PROCESSES)_threads-$(OMP_NUM_THREADS)_n-elts-$(TEST_NUM_ELEMENTS)_trace-$(HPC_TRACE)_$(hpc_run_events_name).hpcmeasurements
-HPC_FAIR_DATABASE     = $(EXE)_fair_procs-$(TEST_MPI_PROCESSES)_threads-$(OMP_NUM_THREADS)_n-elts-$(TEST_NUM_ELEMENTS)_trace-$(HPC_TRACE)_$(hpc_run_events_name)_metric-db-$(HPC_DATABASE_METRIC_DB).hpcdatabase
+HPC_FAIR_MEASUREMENTS = $(EXE)_fair_$(HPC_BASE_NAME).hpcmeasurements
+HPC_FAIR_DATABASE     = $(EXE)_fair_$(HPC_BASE_NAME)_metric-db-$(HPC_DATABASE_METRIC_DB).hpcdatabase
 
-HPC_UNFAIR_MEASUREMENTS = $(EXE)_unfair_procs-$(TEST_MPI_PROCESSES)_threads-$(OMP_NUM_THREADS)_n-elts-$(TEST_NUM_ELEMENTS)_trace-$(HPC_TRACE)_$(hpc_run_events_name).hpcmeasurements
-HPC_UNFAIR_DATABASE     = $(EXE)_unfair_procs-$(TEST_MPI_PROCESSES)_threads-$(OMP_NUM_THREADS)_n-elts-$(TEST_NUM_ELEMENTS)_trace-$(HPC_TRACE)_$(hpc_run_events_name)_metric-db-$(HPC_DATABASE_METRIC_DB).hpcdatabase
+HPC_UNFAIR_MEASUREMENTS = $(EXE)_unfair_$(HPC_BASE_NAME).hpcmeasurements
+HPC_UNFAIR_DATABASE     = $(EXE)_unfair_$(HPC_BASE_NAME)_metric-db-$(HPC_DATABASE_METRIC_DB).hpcdatabase
 
 HPC_MEASUREMENTS = $(HPC_FAIR_MEASUREMENTS) $(HPC_UNFAIR_MEASUREMENTS)
 HPC_DATABASES = $(HPC_FAIR_DATABASE) $(HPC_UNFAIR_DATABASE)
-
 
 # Phoney dependencies
 # Build miniapp executable
@@ -78,11 +80,11 @@ $(EXE):%:%.c
 # Run app with hpcrun to create measurements file
 # The fair run
 $(HPC_FAIR_MEASUREMENTS): $(EXE)
-	$(MPISPWAN) --oversubscribe -np $(TEST_MPI_PROCESSES) $(HPCRUN) $(hpcrun_trace_arg) $(hpc_run_events_arg) -o $@ ./$(EXE) -n $(TEST_NUM_ELEMENTS) -q -d fair
+	$(MPISPWAN) --oversubscribe -np $(TEST_MPI_PROCESSES) $(HPCRUN) $(hpcrun_trace_arg) $(hpc_run_events_arg) -o $@ ./$(EXE) -d fair -n $(TEST_NUM_ELEMENTS) -i $(TEST_NUM_ITERATIONS) -q
 
 # The unfair run
 $(HPC_UNFAIR_MEASUREMENTS): $(EXE)
-	$(MPISPWAN) --oversubscribe -np $(TEST_MPI_PROCESSES) $(HPCRUN) $(hpcrun_trace_arg) $(hpc_run_events_arg) -o $@ ./$(EXE) -n $(TEST_NUM_ELEMENTS) -q -d unfair
+	$(MPISPWAN) --oversubscribe -np $(TEST_MPI_PROCESSES) $(HPCRUN) $(hpcrun_trace_arg) $(hpc_run_events_arg) -o $@ ./$(EXE) -d unfair -n $(TEST_NUM_ELEMENTS) -i $(TEST_NUM_ITERATIONS) -q
 
 # Inspect executable
 $(HPC_STRUCT): $(EXE)
