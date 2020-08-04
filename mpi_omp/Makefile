@@ -40,7 +40,7 @@ ifeq ($(HPC_RUN_EVENTS), )
 	hpc_run_events_name=DEFAULT
 	hpc_run_events_arg=
 else
-	hpc_run_events_name !=  echo $(HPC_RUN_EVENTS) | sed 's|[[:space:]]\+|_|g'
+	hpc_run_events_name = $(shell echo $(HPC_RUN_EVENTS) | sed 's|[[:space:]]\+|_|g' )
 	hpc_run_events_arg = -e $(shell echo $(HPC_RUN_EVENTS) | sed 's|[[:space:]]\+| -e |g')
 endif
 
