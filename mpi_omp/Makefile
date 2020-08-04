@@ -8,7 +8,7 @@ MPISPWAN?=mpirun
 
 HPCSTRUCT?=hpcstruct
 HPCRUN?=hpcrun
-HPCPROF?=hpcprof-mpi
+HPCPROF?=hpcprof
 
 TEST_MPI_PROCESSES?=4
 OMP_NUM_THREADS?=2
@@ -78,11 +78,11 @@ $(EXE):%:%.c
 # Run app with hpcrun to create measurements file
 # The fair run
 $(HPC_FAIR_MEASUREMENTS): $(EXE)
-	$(MPISPWAN) --oversubscribe -np $(TEST_MPI_PROCESSES) $(HPCRUN) $(hpcrun_trace_arg) $(hpc_run_events_arg) -o $@ ./$(EXE) -n $(TEST_NUM_ELEMENTS) -q -d unfair
+	$(MPISPWAN) --oversubscribe -np $(TEST_MPI_PROCESSES) $(HPCRUN) $(hpcrun_trace_arg) $(hpc_run_events_arg) -o $@ ./$(EXE) -n $(TEST_NUM_ELEMENTS) -q -d fair
 
 # The unfair run
 $(HPC_UNFAIR_MEASUREMENTS): $(EXE)
-	$(MPISPWAN) --oversubscribe -np $(TEST_MPI_PROCESSES) $(HPCRUN) $(hpcrun_trace_arg) $(hpc_run_events_arg) -o $@ ./$(EXE) -n $(TEST_NUM_ELEMENTS) -q -d fair
+	$(MPISPWAN) --oversubscribe -np $(TEST_MPI_PROCESSES) $(HPCRUN) $(hpcrun_trace_arg) $(hpc_run_events_arg) -o $@ ./$(EXE) -n $(TEST_NUM_ELEMENTS) -q -d unfair
 
 # Inspect executable
 $(HPC_STRUCT): $(EXE)
