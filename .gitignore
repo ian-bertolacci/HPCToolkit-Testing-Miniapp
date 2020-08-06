@@ -1,4 +1,4 @@
-miniapp
+*.exe
 *.hpcstruct
 *.hpcmeasurements
 *.hpcdatabase

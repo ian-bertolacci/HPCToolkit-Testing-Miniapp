@@ -23,7 +23,7 @@ HPC_RUN_EVENTS ?= CPUTIME@1
 CC_FLAGS ?= -O3 -gdwarf-2 -g3 -lm -fopenmp
 CC=$(MPICC) # I dont like this, but CC is set by default in make, I think, so ?= does not overwrite the CC variable.
 
-EXE=miniapp
+EXE=miniapp.exe
 
 # Setup hpcrun trace arguments
 ifeq ($(HPC_TRACE),yes)
@@ -74,7 +74,7 @@ all: analyze
 
 # Real dependencies
 # Build executable
-$(EXE):%:%.c
+$(EXE):%.exe:%.c
 	$(CC) $^ -o $@ $(CC_FLAGS)
 
 # Run app with hpcrun to create measurements file
@@ -100,7 +100,7 @@ clean: clean-profile clean-bin
 clean-bin: clean-exe clean-objs
 
 clean-exe:
-	- rm $(EXE)
+	- rm *.exe a.out
 
 clean-objs:
 	-rm *.o
