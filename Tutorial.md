@@ -13,8 +13,8 @@
     * [Building Performance Database](#Building-Performance-Database)
 
   + [Viewing Profile](#Viewing-Profile)
-    * [Source View (`hpcviewer`)](#[Source-View-(`hpcviewer`)]
-    * [Trace View (`hpctraceviewer`)](#[Trace-View-hpctraceviewer)]
+    * [Source View (`hpcviewer`)](#Source-View-hpcviewer)
+    * [Trace View (`hpctraceviewer`)](#Trace-View-hpctraceviewer)
 
 # Quick-start
 To skip ahead, you can get started by compiling the miniapp (`make -C miniapp build`), going into `examples/basic_miniapp_run` and running `./run.sh` (or `simple_run.sh`, they do the same thing).
