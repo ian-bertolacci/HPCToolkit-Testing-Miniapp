@@ -1,13 +1,31 @@
 #!/usr/bin/env bash
 
-miniapp=../../mpi_omp/miniapp
+# Test un arguments
+## Problem/work configuration
+elements=10000
+iterations=10000
+work_distribution=fair
+
+## Parallelism
+processes=2
+threads=2
+
+## Profiling event
+event="CPUTIME"
+
+# More detailed setup
+miniapp=../../miniapp/miniapp.exe
 miniapp_source=$(dirname ${miniapp})
 miniapp_name=$(basename ${miniapp})
-miniapp_args=""
+miniapp_n_elements=${elements}
+miniapp_iterations=${iterations}
+miniapp_work_distribution=${work_distribution}
+miniapp_threads=${threads}
+miniapp_args="-n ${miniapp_n_elements} -i ${miniapp_iterations} -d ${miniapp_work_distribution} -t ${miniapp_threads}"
 miniapp_command="${miniapp} ${miniapp_args}"
 
 mpi_spawn=mpirun
-mpi_processes=2
+mpi_processes=${processes}
 mpi_args="--oversubscribe -np ${mpi_processes}"
 mpi_base_command="${mpi_spawn} ${mpi_args}"
 
@@ -17,7 +35,7 @@ hpcstruct_args="-o ${hpcstruct_output}"
 hpcstruct_command="${hpcstruct} ${miniapp} ${hpcstruct_args}"
 
 hpcrun=hpcrun
-hpcrun_event="CPUTIME"
+hpcrun_event=${event}
 hpcrun_output="${miniapp_name}.hpcmeasurements"
 hpcrun_args="-t -o ${hpcrun_output} -e ${hpcrun_event}"
 hpcrun_command="${mpi_base_command} ${hpcrun} ${hpcrun_args} ${miniapp_command}"
@@ -48,6 +66,6 @@ eval ${hpcprof_command}
 
 # Output can be viewed with hpcviewer and hpctraceviewer
 # Source view
-#   hpcviewer miniapp.hpcdatabase
+#   hpcviewer miniapp.exe.hpcdatabase
 # Trace view
-#   hpctraceviewer miniapp.hpcdatabase
+#   hpctraceviewer miniapp.exe.hpcdatabase

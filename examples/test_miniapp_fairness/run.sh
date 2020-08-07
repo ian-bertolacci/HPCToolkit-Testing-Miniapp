@@ -11,7 +11,7 @@ hpcrun_events_array=( CPUTIME )
 # perf::CACHE-MISSES PAPI_L1_DCM PAPI_L2_DCM PAPI_L3_DCM PAPI_FP_OPS PAPI_LD_INS PAPI_SR_INS CPUTIME
 
 # Miniapp settings
-miniapp=../../mpi_omp/miniapp
+miniapp=../../miniapp/miniapp.exe
 miniapp_source=$(dirname ${miniapp})
 miniapp_name=$(basename ${miniapp})
 
