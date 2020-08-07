@@ -1,6 +1,18 @@
 # HPCToolkit Tutorial
 
-## Quick-start
+## Table of contents:
+- [Quick-start](#quick-start)
+- [Getting Started](#getting-started)
+  + [Installing HPCToolkit](#Installing-HPCToolkit)
+  + [Building the MiniApp](#Building-the-MiniApp)
+- [Using HPCToolkit](#Using-HPCToolkit)
+  + [Workflow](#Workflow)
+  + [Analysis and Profiling](#Analysis-and-Profiling)
+    * [Binaray Analaysis With HPCToolkit](#Binaray-Analaysis-With-HPCToolkit)
+    * [Running Application With HPCToolkit](#Running-Application-With-HPCToolkit)
+    * [Building Performance Database](#Building-Performance-Database)
+
+# Quick-start
 To skip ahead, you can get started by compiling the miniapp (`make -C miniapp build`), going into `examples/basic_miniapp_run` and running `./run.sh` (or `simple_run.sh`, they do the same thing).
 This creates the performance database.
 
@@ -30,17 +42,17 @@ One run uses a fair work distribution, and the other runs with an unfair work di
 
 See the miniapp Readme for more details including how to change the miniapp run configuration.
 
-## Getting started
+# Getting Started
 
 
-### Installing HPCToolkit
+## Installing HPCToolkit
 I recommend using the [`spack`](https://spack.readthedocs.io/en/latest/getting_started.html).
 The HPCToolkit compilation and test execution software can be installed with `spack install hpctoolkit`
 The HPCToolkit visualization software can be installed with `spack install hpcviewer`
 It is not necessary to have *both* packages installed on a system if it is only doing performance tests *xor* visualizing runs.
 
 
-### Building the MiniApp
+## Building the MiniApp
 The miniapp should be easily built with `make -C miniapp build`, or just `make  build` while inside the miniapp directory.
 This creates the miniapp executable, `miniapp.exe`
 The only dependencies are an MPI installation (I've successfully used OpenMPI 3.1.6 and 1.10.2) and a viable C compiler.
@@ -139,3 +151,6 @@ Below is a complete example which runs the miniapp with 10000 elements and for 1
 cd miniapp
 mpirun -np 2 hpcrun -t -e PERF_COUNT_HW_CACHE_MISSES@f1000 -o miniapp.exe.hpcmeasurements ./miniapp.exe -t 2 -n 10000 -i 10000
 ```
+
+
+### Building Performance Database
