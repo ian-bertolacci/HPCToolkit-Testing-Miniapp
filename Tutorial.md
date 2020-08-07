@@ -9,8 +9,12 @@
   + [Workflow](#Workflow)
   + [Analysis and Profiling](#Analysis-and-Profiling)
     * [Binaray Analaysis With HPCToolkit](#Binaray-Analaysis-With-HPCToolkit)
-    * [Running Application With HPCToolkit](#Running-Application-With-HPCToolkit)
+    * [Running Application With HPCToolkit](#Dynamic-Performance-Profiling-Application-With-HPCToolkit)
     * [Building Performance Database](#Building-Performance-Database)
+
+  + [Viewing Profile](#Viewing-Profile)
+    * [Source View (`hpcviewer`)](#[Source-View-(`hpcviewer`)]
+    * [Trace View (`hpctraceviewer`)](#[Trace-View-hpctraceviewer)]
 
 # Quick-start
 To skip ahead, you can get started by compiling the miniapp (`make -C miniapp build`), going into `examples/basic_miniapp_run` and running `./run.sh` (or `simple_run.sh`, they do the same thing).
@@ -23,7 +27,7 @@ After running and creating this performance database, the source view of the pro
 make -C miniapp build
 # Go into the basic_miniapp_run example
 cd examples/basic_miniapp_run
-# Run the example, creating the performance profile database
+# Run the example, creating the profile database
 ./run.sh
 # Launch the source view of the profile (& to launch in background)
 hpcviewer miniapp.exe.hpcdatabase &
@@ -95,14 +99,14 @@ hpcstruct <application executable>
 By default, this creates `<application executable>.hpcstruct`.
 The analysis output file can be changed with the flag `-o <output file path>`
 
-Below is a complete example of performing the binary analysis on the miniapp and writing the output to `miniapp.exe.struct`
+Below is a complete example of performing the binary analysis on the miniapp and writing the output to `miniapp.exe.hpcstruct` (which happens to be the default name):
 ```bash
 cd miniapp
-hpcstruct miniapp.exe -o miniapp.exe.struct
+hpcstruct miniapp.exe -o miniapp.exe.hpcstruct
 ```
 
 
-### Running Application With HPCToolkit
+### Dynamic Performance Profiling Application With HPCToolkit
 The most basic way to profile an application using HPCToolkit is with the following command:
 ```bash
 hpcrun [HPCToolkit arguments] <application> [application arguments]
@@ -112,7 +116,7 @@ hpcrun [HPCToolkit arguments] <application> [application arguments]
   In any-case, I'm pretty confident that it *use* to work, and invoking with mpirun works, and is how MPI applications should be run anyways.
   So I'm ignoring the issue.)
 
-If the application runs with MPI, we further wrap this with a call to mpirun (or mpispawn, if you prefer):
+If the application runs with MPI, we further wrap this with a call to `mpirun` (or `mpispawn`, if you prefer):
 ```bash
 mpirun [MPI arguments] hpcrun [HPCToolkit arguments] <application> [application arguments]
 ```
@@ -154,3 +158,32 @@ mpirun -np 2 hpcrun -t -e PERF_COUNT_HW_CACHE_MISSES@f1000 -o miniapp.exe.hpcmea
 
 
 ### Building Performance Database
+After having performed the static binary analysis and the dynamic profiling, the performance database can now be created.
+This requires access to the source used to compile the application's binary.
+
+The database is created with `hpcprof`:
+```bash
+hpcprof -S <static binary analysis (hpcstruct) output file> <dynamic profiling (hpcrun) output directory> -I <path to program source>+
+```
+
+By default this creates the database directory `hpctoolkit-database`.
+This can (and should) be changed with `-o <output directory path>`
+
+The flag `-I` here has a similar meaning to `hpcprof` as it does to a compiler: the argument to the flag is the path to the application's source code directory.
+To greatly simplify things, the path to the source code directory can be suffixed with the `+` operator to indicate that the directory should be searched recursively.
+Note that this does require the *full* source, and not just the headers (as `-I` in a compiler works).
+
+Below is a complete example which creates the profile database directory miniapp.exe.hpcdatabase using the previously created analysis outputs:
+```bash
+cd miniapp
+hpcprof -S miniapp.exe.hpcstruct miniapp.exe.hpcmeasurements -I ./+ -o miniapp.exe.hpcdatabase
+```
+
+## Viewing Profile
+There are two views of the profile.
+- The code-centric source view (using `hpcviewer`)
+- The time-centric trace view (using `hpctraceviewer`)
+
+### Source View (`hpcviewer`)
+
+### Trace View (`hpctraceviewer`)
