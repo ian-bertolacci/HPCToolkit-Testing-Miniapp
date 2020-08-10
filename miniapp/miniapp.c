@@ -24,7 +24,7 @@
 #define max2(a, b)       (op2(max,a,b))
 #define max3(a, b, c)    (op3(max,a,b,c))
 
-
+// Test if argument string would parse into an unsigned integer
 bool isunsignedinteger( const char* str ){
   for( int i = 0; i < strlen(str) && str[i] != '\0'; ++i ){
     if( ! isdigit( str[i] ) ) return false;
@@ -32,6 +32,7 @@ bool isunsignedinteger( const char* str ){
   return true;
 }
 
+// Test if argument string would parse into an integer
 bool isinteger( const char* str ){
   ssize_t start = 0;
   // check for sign, advance start-of-unsigned-int position
@@ -45,12 +46,25 @@ bool isinteger( const char* str ){
 
 // Distributed array
 typedef struct {
-  double* local_array;
-  size_t local_elts, total_elts;
-  size_t global_offset; // Index in global array that is locally index 0
-  size_t n_indirection_arrays; // total number of local indirection arrays
+  double* local_array;           // Pointer to start of local portion of array
+  size_t total_elts;             // Total number of elements in distributed array
+  size_t local_elts;             // Number of elements maintained by this rank in local_array
+  size_t global_offset;          // Index in global array that is locally index 0
+
+  // To mimic/exacerbate caching issues, may use one or more inderection arrays
+  // if necessary (when using -o "indirect" or "random")
+  size_t** indirection_arrays;   // array of indirection arrays
+  // Each element in this array, is another array with local_elts number of elements.
+  // Each element is an index into local_array.
+  // Order is unspecified here.
+  // Can be ascending (if using -o "indirect")
+  // Can be random (if using -o "random")
+  // For -o "random", multiple arrays are created so that a loop sequence
+  // is unlikely to benifit from caching the previous values
+  size_t n_indirection_arrays;   // total number of local indirection arrays
   size_t indirection_array_next; // which indirection array to use next
-  size_t** indirection_arrays; // array of indirection arrays
+
+
 } distributed_array;
 
 // Macro for iterating over distributed array
@@ -65,28 +79,40 @@ typedef struct {
     ++ iterator ## idx                                                        \
   ){                                                                          \
     size_t iterator;                                                          \
+    /* if using indirection arrays, use i'th indirect index iterator */       \
     if( ptr_distributed_array->indirection_arrays != NULL ){                  \
+      /* note: would love to have this be outside the loop, but need for      \
+         statement exposed for openmp pragma. The expression getting the      \
+         indirection array is likely to be common-subexpression-eliminated */ \
       iterator = ptr_distributed_array->indirection_arrays[ptr_distributed_array->indirection_array_next][iterator ## idx]; \
-    } else {                                                                  \
+    }                                                                         \
+    /* otherwise use literal index */                                         \
+    else {                                                                    \
       iterator = iterator ## idx;                                             \
     }                                                                         \
+    /* do loop body */                                                        \
     {                                                                         \
       body                                                                    \
     }                                                                         \
   }                                                                           \
+  /* set next indirection_array */                                            \
   if( ptr_distributed_array->indirection_arrays != NULL ){                    \
-    (ptr_distributed_array)->indirection_array_next = ((ptr_distributed_array)->indirection_array_next == (ptr_distributed_array)->n_indirection_arrays - 1 ) ? \
-                                                        0     \
-                                                      : ((ptr_distributed_array)->indirection_array_next + 1);  \
+    (ptr_distributed_array)->indirection_array_next =                         \
+    /* if this current inridection array is the last array, use the first */  \
+    ((ptr_distributed_array)->indirection_array_next == (ptr_distributed_array)->n_indirection_arrays - 1 ) \
+      ? 0                                                                     \
+      /* Otherwise use the next array */                                      \
+      : ((ptr_distributed_array)->indirection_array_next + 1);                \
   }
 
 
-
+// Work distribution enum
 typedef enum {
   distribute_fair,
   distribute_unfair,
 } distribution_type_t;
 
+// Loop iteration order enum
 typedef enum {
   iteration_order_regular_order             = 0,
   iteration_order_ascending_indirect_order  = (1 << 0) | 1,
@@ -98,7 +124,7 @@ inline bool is_iteration_order_indirect( const iteration_order_type_t iteration_
   return ( iteration_order_type & 1 ) != 0;
 }
 
-
+// Verbosity enum
 typedef enum {
   verbosity_errors = 0,
   verbosity_less   = 5,
@@ -139,8 +165,10 @@ void program_finalize( ){
   MPI_Finalize();
 }
 
-// Parse arguments and create global program context
-// Note: Cannot use any of the distributed printf functions here
+// \brief Parse CLI arguments and create a program context, and assign it to global_program_context
+// \param argc number of argument strings (length of argv)
+// \param argv array of null-terminated argument strings (length is argc )
+// \return Fully initialized program_context_t which was assigned to global_program_context
 program_context_t program_init( int argc, char** argv ){
   if( global_program_context.initialized ){
     fprintf( stderr, "Error: Program already initialized\n" );
@@ -472,6 +500,11 @@ program_context_t program_init( int argc, char** argv ){
   return ret_obj;
 }
 
+
+// \brief Create proper indirection array of size for distributed_array_t given the indirection order type
+// \param size number indices of indirection array
+// \param iteration_order_type order type of indirection array
+// \returns The allocated and populated indirection array
 size_t* create_local_indirection_array( size_t size, iteration_order_type_t iteration_order_type  ){
   size_t* indirection_array = NULL;
 
@@ -521,7 +554,10 @@ size_t* create_local_indirection_array( size_t size, iteration_order_type_t iter
   return indirection_array;
 }
 
-// Construct distributed array
+// \brief Construct distributed array
+// \param n_elts total number of elements across all processes for this distributed array.
+// \param distribution_type type of distribution of elements across process
+// \return allocated and populated distributed array object
 distributed_array allocate_distributed_array( size_t n_elts, distribution_type_t distribution_type ){
   size_t portion, offset;
 
@@ -626,6 +662,8 @@ distributed_array allocate_distributed_array( size_t n_elts, distribution_type_t
   return ret_obj;
 }
 
+// \brief deallocated distributed array object
+// \param distributed_array distributed array object to be deallocated
 void free_distributed_array( distributed_array* distributed_array ){
   free(distributed_array->local_array);
   if( distributed_array->n_indirection_arrays > 0 ){
@@ -636,7 +674,8 @@ void free_distributed_array( distributed_array* distributed_array ){
   }
 }
 
-// Initialize distributed array with arbitrary values
+// \brief Initialize distributed array with arbitrary values.
+// \param distributed_array distributed array object to populate with data
 void init_distributed_array( distributed_array* distributed_array ){
     // Note: Schedule and chunk-size were set at program init.
     //       There should be no reason to need any scheduling causes here.
@@ -652,7 +691,16 @@ void init_distributed_array( distributed_array* distributed_array ){
     );
 }
 
-// "Stencilize" a local array in parallel
+// \brief "Stencilize" a local array in parallel
+// The stencil function is: A'[i] = max( A[i-1], A[i], A[i+1] ) / (1 + abs( min( A[i-1], A[i], A[i+1]  ) ) )
+// Operation happens 'in-place' in that the distribued array object is modified,
+// but because there can be a random order of modifications, this still requires
+// the allocation of a new array to write updates into. When all updates are
+// written, the array object's previous local array is freed, and the update
+// array is assigned as the array object's local array. This is still legal for
+// future deallocation of the distributed array object. Bondaries are handled
+// by only using the valid cells in the neighborhood in the stencil fuction.
+// \param distributed_array distributed array object whose local array will have stencil operation applied to it.
 void in_place_stencilize_local_array( distributed_array* distributed_array ){
   // Array where updates are written to.
   // At the end, this will become the new local array.
@@ -691,7 +739,14 @@ void in_place_stencilize_local_array( distributed_array* distributed_array ){
   free( previous_local_array );
 }
 
-// Distributed-Parallel "Stencilize" a distributed array
+// \brief Distributed-Parallel "Stencilize" whole distributed array
+// The stencil function is: A'[i] = max( A[i-1], A[i], A[i+1] ) / (1 + abs( min( A[i-1], A[i], A[i+1]  ) ) )
+// Bondaries are handled by only using the valid cells in the neighborhood in
+// the stencil fuction. Communication occurs between ranks which have adjacent
+// and the function is applied to those neighborhood, and thus the stencilize
+// operation always results in the same array regardless of if and how it is
+// distributed (both in terms of number of processes, and in work distribution).
+// \param distributed_array distributed array object to perform stencil operation on
 void in_place_stencilize_distributed_array( distributed_array* distributed_array ){
   // First, need to make copies of the end_values of our local
   double end_0_neighborhood[3] = {
@@ -798,7 +853,9 @@ void in_place_stencilize_distributed_array( distributed_array* distributed_array
   }
 }
 
-// Parallel sum a double array
+// \brief Parallel sum local portion of distributed array
+// \param distributed_array distributed array object whose local array elements will be summed.
+// \return the value of the sum of the distributed array object's local array
 double sum_local_array( distributed_array* distributed_array ){
   double rank_local_sum = 0.0;
 
@@ -816,8 +873,12 @@ double sum_local_array( distributed_array* distributed_array ){
   return rank_local_sum;
 }
 
-// Distributed-Parallel sum a distributed array
-// Note: returns zero if not calling on the primary rank
+// \brief Distributed-Parallel sum a distributed array
+// All ranks communicate their local sums to the primary, who computes the
+// final value.
+// \return value of sum (only if called on primary rank or if
+//   global_program_context.synchronize_at_end_of_distributed_array_operations
+//   set).
 double sum_distributed_array( distributed_array* distributed_array ){
   // Array where (on primary) sums will be gathered into
   double* all_sums = NULL ;
@@ -855,6 +916,11 @@ double sum_distributed_array( distributed_array* distributed_array ){
   return  sum;
 }
 
+
+// \brief Main
+// \param argc number of argument strings (length of argv)
+// \param argv array of null-terminated argument strings (length is argc )
+// \return exit status
 int main( int argc, char** argv ){
   // Initialize program
   program_init( argc, argv );
