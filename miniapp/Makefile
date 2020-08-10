@@ -6,6 +6,8 @@ MPICC?=mpicc
 MPICXX?=mpicxx
 MPISPWAN?=mpirun
 
+MPISPAWN_ARGS ?= --oversubscribe
+
 HPCSTRUCT?=hpcstruct
 HPCRUN?=hpcrun
 HPCPROF?=hpcprof
@@ -18,7 +20,7 @@ TEST_NUM_ITERATIONS?=1000
 HPC_TRACE?=yes
 HPC_DATABASE_METRIC_DB?=no
 
-HPC_RUN_EVENTS ?= CPUTIME@1
+HPC_RUN_EVENTS ?= CPUTIME@f1000000
 
 CC_FLAGS ?= -O3 -gdwarf-2 -g3 -lm -fopenmp
 CC=$(MPICC) # I dont like this, but CC is set by default in make, I think, so ?= does not overwrite the CC variable.
@@ -80,11 +82,11 @@ $(EXE):%.exe:%.c
 # Run app with hpcrun to create measurements file
 # The fair run
 $(HPC_FAIR_MEASUREMENTS): $(EXE)
-	$(MPISPWAN) --oversubscribe -np $(TEST_MPI_PROCESSES) $(HPCRUN) $(hpcrun_trace_arg) $(hpc_run_events_arg) -o $@ ./$(EXE) -d fair -n $(TEST_NUM_ELEMENTS) -i $(TEST_NUM_ITERATIONS) -q
+	$(MPISPWAN)$(MPISPAWN_ARGS) -np $(TEST_MPI_PROCESSES) $(HPCRUN) $(hpcrun_trace_arg) $(hpc_run_events_arg) -o $@ ./$(EXE) -d fair -n $(TEST_NUM_ELEMENTS) -i $(TEST_NUM_ITERATIONS) -q
 
 # The unfair run
 $(HPC_UNFAIR_MEASUREMENTS): $(EXE)
-	$(MPISPWAN) --oversubscribe -np $(TEST_MPI_PROCESSES) $(HPCRUN) $(hpcrun_trace_arg) $(hpc_run_events_arg) -o $@ ./$(EXE) -d unfair -n $(TEST_NUM_ELEMENTS) -i $(TEST_NUM_ITERATIONS) -q
+	$(MPISPWAN) $(MPISPAWN_ARGS) -np $(TEST_MPI_PROCESSES) $(HPCRUN) $(hpcrun_trace_arg) $(hpc_run_events_arg) -o $@ ./$(EXE) -d unfair -n $(TEST_NUM_ELEMENTS) -i $(TEST_NUM_ITERATIONS) -q
 
 # Inspect executable
 $(HPC_STRUCT): $(EXE)
