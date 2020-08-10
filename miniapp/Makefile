@@ -83,7 +83,7 @@ $(EXE):%.exe:%.c
 # Run app with hpcrun to create measurements file
 # The fair run
 $(HPC_FAIR_MEASUREMENTS): $(EXE)
-	$(MPISPWAN)$(MPISPAWN_ARGS) -np $(TEST_MPI_PROCESSES) $(HPCRUN) $(hpcrun_trace_arg) $(hpc_run_events_arg) -o $@ ./$(EXE) -t $(TEST_OMP_NUM_THREADS) -d fair -n $(TEST_NUM_ELEMENTS) -i $(TEST_NUM_ITERATIONS) -q
+	$(MPISPWAN) $(MPISPAWN_ARGS) -np $(TEST_MPI_PROCESSES) $(HPCRUN) $(hpcrun_trace_arg) $(hpc_run_events_arg) -o $@ ./$(EXE) -t $(TEST_OMP_NUM_THREADS) -d fair -n $(TEST_NUM_ELEMENTS) -i $(TEST_NUM_ITERATIONS) -q
 
 # The unfair run
 $(HPC_UNFAIR_MEASUREMENTS): $(EXE)
