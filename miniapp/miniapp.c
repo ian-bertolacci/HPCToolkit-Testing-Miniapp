@@ -193,7 +193,7 @@ program_context_t program_init( int argc, char** argv ){
   bool synchronize_at_end_of_distributed_array_operations = default_wait_on_non_collective_distiributed_array_operations;
 
   char* usage_fmt_string = \
-    "    -h"
+    "    -h\n"
     "        Print this message and exit.\n\n"
     "    -N <unsigned int>\n"
     "        Set number of elements in distributed array.\n"
