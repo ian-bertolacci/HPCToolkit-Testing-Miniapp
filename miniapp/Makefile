@@ -48,7 +48,7 @@ else
 	hpc_run_events_arg = -e $(shell echo $(HPC_RUN_EVENTS) | sed 's|[[:space:]]\+| -e |g')
 endif
 
-HPC_BASE_NAME=procs-$(TEST_MPI_PROCESSES)_threads-$(OMP_NUM_THREADS)_n-elts-$(TEST_NUM_ELEMENTS)_n-iters-$(TEST_NUM_ITERATIONS)_trace-$(HPC_TRACE)_$(hpc_run_events_name)
+HPC_BASE_NAME=procs-$(TEST_MPI_PROCESSES)_threads-$(TEST_OMP_NUM_THREADS)_n-elts-$(TEST_NUM_ELEMENTS)_n-iters-$(TEST_NUM_ITERATIONS)_trace-$(HPC_TRACE)_$(hpc_run_events_name)
 
 HPC_STRUCT=$(EXE).hpcstruct
 
