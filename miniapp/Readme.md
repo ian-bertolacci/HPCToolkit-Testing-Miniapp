@@ -24,12 +24,18 @@ make analyze
 - `clean-profile` : Remove all profiling files and directories.
 - `clean` : Remove all compilation and profiling files and directories.
 
-## Profile settings
+## Profile Settings
 There are three variables that can be set to change the profile configuration of  of the miniapp:
-- `TEST_MPI_PROCESSES` : Number of MPI Processes to spawn
-- `TEST_OMP_NUM_THREADS` : Number of OpenMP threads available to *EACH* process (e.g. 2 MPI processes and 4 OpenMP threads means 8 total OpenMP Threads) (Note: the default is the value of the standard OMP_NUM_THREADS environment variable)
+- `TEST_MPI_PROCESSES` : Number of MPI Processes to spawn.
+  + Default: 4
+- `TEST_OMP_NUM_THREADS` : Number of OpenMP threads available to *EACH* process (e.g. 2 MPI processes and 4 OpenMP threads means 8 total OpenMP Threads)
+  + Default: the value of the standard OMP_NUM_THREADS environment variable, or 2 if unset.
 - `TEST_NUM_ELEMENTS` : Number of elements in the distributed array.
-- `TEST_NUM_ELEMENTS` : Number of elements in the distributed array.
+  + Default: 1000
+- `TEST_NUM_ITERATIONS` : Number of stencil-reduce iterations to perform.
+  + Default: 1000
+- `HPC_RUN_EVENTS` : list of one-or-more events that hpcrun will sample during profile run. Can include the sampling frequency or period.
+  + Default: ( CPUTIME@f1000000 )
 
 These can be set in a number of ways:
 1. By assigning in the arguments to the make command  (preferred) (e.g. `make analyze TEST_MPI_PROCESSES=16 TEST_NUM_ELEMENTS=32`)
@@ -38,6 +44,10 @@ These can be set in a number of ways:
 
 Each profile and analysis of the miniapp is unique with respect to these variables, creating file and directory names specific to those settings.
 As such, previous runs with different settings do not interfere with the make dependency resolution process and are preserved.
+
+## Profile Database Names
+Databases created by this system have the following name scheme:
+`miniapp.exe_(fair)|(unfair)_procs-$(TEST_MPI_PROCESSES)_threads-$(TEST_OMP_NUM_THREADS)_n-elts-$(TEST_NUM_ELEMENTS)_n-iters-$(TEST_NUM_ITERATIONS)_trace-$(HPC_TRACE)_$(hpc_run_events_name)_metric-db-(yes)|(no).hpcdatabase`
 
 # Using MiniApp standalone
 The MiniApp can be used outside of the build system's profiling target: ```./miniapp.exe [optional arguments]```
@@ -144,3 +154,11 @@ The stencil computation is simply `A'[i] = max( A[i-1], A[i], A[i+1] ) / (1 + ab
 At the bondaries, the invalid element is simply left out of the max/min calls.
 Syncronization happens during the stencil operation between ranks containing adjacent portions of the array to update the local boundaries.
 Synchronization happens during reduce between the primary and non-primary ranks to communicate local sums for the primary to compute the global sum.
+
+
+# Notes
+## Metric Databases
+To use HPCToolkit metric databases, you (currently and unnecessarily) need to use an HPCToolkit build with MPI enabled.
+This is unnecessary unless using another tool like Hatchett.
+The (issue GitHub/HPCToolkit/hpctoolkit#289)[https://github.com/HPCToolkit/hpctoolkit/issues/289] may shed light on this.
+I think I installed with Spack using `spack install hpctoolkit+mpi`
