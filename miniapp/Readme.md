@@ -31,11 +31,11 @@ There are three variables that can be set to change the profile configuration of
 - `TEST_OMP_NUM_THREADS` : Number of OpenMP threads available to *EACH* process (e.g. 2 MPI processes and 4 OpenMP threads means 8 total OpenMP Threads)
   + Default: the value of the standard OMP_NUM_THREADS environment variable, or 2 if unset.
 - `TEST_NUM_ELEMENTS` : Number of elements in the distributed array.
-  + Default: 1000
+  + Default: 1000miniapp.exe_fair_procs-2_threads-1_n-elts-10000000_n-iters-100_trace-yes_CPUTIME_metric-db-no.hpcdatabase
 - `TEST_NUM_ITERATIONS` : Number of stencil-reduce iterations to perform.
   + Default: 1000
 - `HPC_RUN_EVENTS` : list of one-or-more events that hpcrun will sample during profile run. Can include the sampling frequency or period.
-  + Default: ( CPUTIME@f1000000 )
+  + Default: ( CPUTIME )
 
 These can be set in a number of ways:
 1. By assigning in the arguments to the make command  (preferred) (e.g. `make analyze TEST_MPI_PROCESSES=16 TEST_NUM_ELEMENTS=32`)
@@ -99,7 +99,7 @@ This will not execute any HPCToolkit commands, and thus will not result in any p
   + Set loop ordering method.
   + Values:
     * "default"  : Iterate over indices in the default implementation order.
-    * "indirect" : Iterate over indices in ascending order (ignoring parallelism order) though an indirection array.
+    * "indirect" : Iterate over indices in ascending order (ignoring parallelism order) though an indirection array (baseline version of 'random')
     * "random"   : Iterate over indices in random order through an indirection array.
   + Default : "default"
 

@@ -142,11 +142,15 @@ I think higher frequency is suppose to give more accurate results, but has highe
 I'm not sure how changing the period affects the measurements.
 Supposedly mixing certain events and timer events has undesirable side effects.
 
+
 Note: There are usually permissions issues with most events.
   If there is an error which reads similar to "Failed to initialize the <event name> event.: Permission denied", it is likely that `kernel.perf_event_paranoid` is set too high.
   This can be set with `sudo sysctl kernel.perf_event_paranoid=<level>` or `sudo sh -c 'echo <level> > /proc/sys/kernel/perf_event_paranoid'`, _*but you do so at your own security risk*_.
   The minimum level is probably dependent on what events are being measured, but I think that a level of 2 works, at least for what I tried.
   For UArizona systems, `kernel.perf_event_paranoid` level is (as of 8.6.2020) 1 for Ocelote and 2 for Puma.
+
+Note: I usually run without the frequency/period modifier on the event, largely because I have not been able make heads or tails of the results.
+  Leaving it without the modifier seems to produce perfectly fine results.
 
 Below is a complete example which runs the miniapp with 10000 elements and for 10000 iterations, using 2 processes and 2 threads, collecting metrics on the PERF_COUNT_HW_CACHE_MISSES event at a rate of 1000 samples/second, and putting the output in miniapp.exe.hpcmeasurements
 ```bash

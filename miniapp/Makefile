@@ -21,7 +21,7 @@ TEST_NUM_ITERATIONS?=1000
 HPC_TRACE?=yes
 HPC_DATABASE_METRIC_DB?=no
 
-HPC_RUN_EVENTS ?= CPUTIME@f1000000
+HPC_RUN_EVENTS ?= CPUTIME
 
 CC_FLAGS ?= -O3 -gdwarf-2 -g3 -lm -fopenmp
 CC=$(MPICC) # I dont like this, but CC is set by default in make, I think, so ?= does not overwrite the CC variable.
