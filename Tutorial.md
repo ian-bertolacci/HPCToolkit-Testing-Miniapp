@@ -363,6 +363,13 @@ There are 3 main sub-panels to focus on:
   Color indicates function (as labeled on Call-Path panel) at the particular depth (as indicated in call path depth and this view's curor).
   Cursor (tall cross-hair) is the time (vertical tall part of cursor) and depth (short horizontal part of cursor).
 
-
+Below is a visual breakdown of the trace view
 (TODO insert figure(s?) for whole window breakdown)
+
+The trace view somewhat complicated to understand.
+The functions displayed in that view are the functions which are *at most* at the depth selected.
+So if a process/thread's call-stack at time `t` is `[ foo, bar, baz ]` and the depth is depth 0, then only `foo` will be displayed at that point in time for that process/thread.
+
+The below video demonstrates how, as the depth changes, the trace view changes.
+(Note that this is from a different trace of the miniapp)
 (TODO insert gif of trace view breakdown)
