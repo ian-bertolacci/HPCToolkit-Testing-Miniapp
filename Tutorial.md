@@ -222,8 +222,147 @@ The MiniApp can be configured to run with to work distributions:
 
 The directory [examples/miniapp_UArizona_Puma](examples/miniapp_UArizona_Puma) has dozens of previous runs using the fair/unfair distribution across a range of sizes and iterations.
 
-In this section, we will use the profile databases for a run with 4 processes, and 24 threads [examples/miniapp_UArizona_Puma/<DIR>](examples/miniapp_UArizona_Puma/<DIR>)
+In this section, we will use the profile databases for run with 4 processes and 24 threads with 10^8 elements for 100 iterations in the fair and unfair distribution cases measuring CPUTIME ( [examples/miniapp_UArizona_Puma/miniapp.exe_fair_procs-4_threads-24_n-elts-100000000_n-iters-100_trace-yes_CPUTIME_metric-db-no.hpcdatabase](examples/miniapp_UArizona_Puma/miniapp.exe_fair_procs-4_threads-24_n-elts-100000000_n-iters-100_trace-yes_CPUTIME_metric-db-no.hpcdatabase), and [examples/miniapp_UArizona_Puma/miniapp.exe_unfair_procs-4_threads-24_n-elts-100000000_n-iters-100_trace-yes_CPUTIME_metric-db-no.hpcdatabase](examples/miniapp_UArizona_Puma/miniapp.exe_unfair_procs-4_threads-24_n-elts-100000000_n-iters-100_trace-yes_CPUTIME_metric-db-no.hpcdatabase) respectively)
 
-Alternatively, you can modify and run [examples/test_miniapp_fairness/run.sh](examples/test_miniapp_fairness/run.sh) and use the output profiling database
+Alternatively, you can use another pair of fair-unfair runs (so long as they have the same execution parameters otherwise) and follow along.
 
-## View
+## Source View
+First, we will see what the difference is in the call-graphs between the two.
+Open the fair database with hpcviewer (`hpcviewer examples/miniapp_UArizona_Puma/miniapp.exe_fair_procs-4_threads-24_n-elts-100000000_n-iters-100_trace-yes_CPUTIME_metric-db-no.hpcdatabase`).
+Note the sub-panel with the tabs "Top-down view", "Bottom-up view", and "Flat view".
+
+Each tab is a different way of exploring the call-tree.
+Each tab has the same columns.
+Regardless of measured event, every tab will have a "scope" column.
+This lists the functions and their nesting (caller->callees in top-down view, callee->callers in bottom-up view, binary->file->function in flat view
+There is also a pair of columns for each measured event, with the event name and units.
+The column suffixed with "(I)" is the "inclusive" sum of the events (i.e. the the cost of the function body and *all* of its children's bodies, but only (I'm pretty sure) for times where the child function was actually called by the parent function).
+The column suffixed with "(E)" is the "exclusive" sum of the events (i.e. the cost of the body alone, with *none* of its children's bodies).
+
+All columns can be sorted by their values or entry names (in the case of "Scope").
+
+There are also :
++ "<program root>": Denotes function called under the program entry point (i.e. `main`)
++ "<thread root>": Denotes function called under some arbitrary thread spawn function (such as `gomp_thread_start`).
+In the top-down view, these are the roots of the caller->callees nesting.
+In the bottom-up view, these are the leaves of the callee->callers nesting.
+They are not present in the flat view.
+
+Each entry in the scope lists the function name, and the line where it is called.
+If `hpcprof` had access to the source of the caller function (which it should for main application profiles), then the line number is a clickable link which will move your source view (the sub-panel above the tabs) to the function invocation.
+If `hpcprof` had access to the source of the callee function (which it should for functions in the main application for main application profiles), then the function name is a clickable link which will move your source view to the functional definition (I'm not sure where it goes if the declaration and definition are in different locations).
+
+Alternatively, the entry may be a "loop", which is a loop at the line in the specified source.
+Similarly to function calls, if the profiler had access to the source with this loop, the name is a link to loop source.
+
+Typically, I use the exclusive sum to find problematic sections of code, and the inclusive sum to determine the actual root cause.
+
+To quickly find the *hottest* path (e.g. the hottest function), go to the Top-down tab, select a column whose value will be used (I suggest CPUTIME (I)), make sure it is descending sorted (down arrow next to the column name), click "<program root>" (or "<thread root if you want>"), then click the flame icon at the top of the sub-panel.
+This will quickly expand the tree to deepest function in the callpath with the highest cost (when column sorted descending; lowest when column sorted ascending)
+This also works in Bottom-up mode to find the root of a hot-path
+However, I am not sure how to find the *next* hottest path.
+This tool can also be used on subtrees, to find the hottest path of the selected entry as opposed to the hottest path of the whole program.
+
+For the current profile we have open, the top-down hottest is the loop in miniapp.c:716.
+
+### Comparison
+Currently, we only have the fair profile database open.
+Lets compare the fair and unfair runs.
+
+Add the unfair database with File->Open database, and opening the unfair database folder (`examples/miniapp_UArizona_Puma/miniapp.exe_unfair_procs-4_threads-24_n-elts-100000000_n-iters-100_trace-yes_CPUTIME_metric-db-no.hpcdatabase`).
+
+Note that this makes a *second* sub-panel with the same of tabs, but now all the tabs are prefixed with a number (and suffixed with the executable name which is the same for both sets).
+On the left are the tabs for the fair run, prefixed with "1" and on the right are the tabs for the unfair run prefixed with "2".
+Currently, hpcviewer does not list the database path anywhere, so you will have to keep these two straight in your mind.
+
+To view the databases metrics side-by-side, we can merge the top-down view with File->Merge databases->Merge top down databases.
+Note: I'm pretty sure that this *will not* modify the database files.
+This creates a new sub-panel with a single tab: "Top-down view (miniap.exe & miniapp.exe)"
+It has the following columns:
++ "Scope",
++ "1-CPUTIME(sec):Sum (I)": the *in*-clusive CPUTIMES from the fair run
++ "1-CPUTIME(sec):Sum (E)": the *ex*-clusive CPUTIMES from the fair run
++ "2-CPUTIME(sec):Sum (I)": the *in*-clusive CPUTIMES from the *un*-fair run
++ "2-CPUTIME(sec):Sum (E)": the *ex*-clusive CPUTIMES from the *un*-fair run
+
+While this is useful, we can also create a derived metric which will be the raw difference in total duration (inclusive) a function ran during the fair run vs the unfair run.
++ Click on the 'f(x)' icon in the "3-Top-down view".
+  This will open a "Creating a derived metric" window.
++ In "Name" (the column name), enter "Diff CPUTIME(sec) (I) (Unfair - Fair)".
+To enter our formula, we'll use the Assistance sub-panel.
++ From the "Metrics" dropdown, select "2-CPUTIME (sec):Sum (I)" (the unfair run's inclusive CPUTIME column).
++ Then click "Point-wise".
+  This will insert a point-wise column variable into the Formula (probably something like `$210`).
++ Then enter "-" (for minus) after the variable inserted by what we just did.
++ Then from the "Metrics" dropdown, select "1-CPUTIME (sec):Sum (I)" (the fair run's inclusive CPUTIME column).
++ Then click "Point-wise" to insert the point-wise column variable into the Formula.
+  If the columns inserted by "Assistance" got out of order somehow, fix them; its just a simple equation.
+
+Then click "OK" at the bottom of the "Creating a derived metric" window.
+
+This will add the "Diff CPUTIME(sec) (I) (Unfair - Fair)" column to the "3-Top-down view" tab (it will be the last column; you may have to scroll to find it).
+
+Now we can see how much more (or less) time the unfair run took in comparison to the fair run.
+First, looking at Sigma  Experiment Aggregate Metrics (sum of whole column) entry in the "Diff CPUTIME(sec) (I) (Unfair - Fair)" colum, it should show a difference in total time of 139 (1.39*e+2, which about matches (with limited precision) a simple subtraction of the "1-CPUTIME(sec):Sum (I)" from "2-CPUTIME(sec):Sum (I)" (3.93*10^3 - 3.79*10^3 = 1.4*10^2).
+
+Using the "hotpath" tool and our derived column, we can find the call path that adds the most time to the unfair runtime.
+Select "Diff CPUTIME(sec) (I) (Unfair - Fair)" in descending mode (click the column name; if the arrow is an up arrow (ascending), click name again to make it go down (descending)), click "<program root>", and then click the flame icon.
+
+This should expand the following path
++ `<program root>`
+  - `main`
+    * `loop at miniapp.c:945`
+        + `950: sum_distributed_array`
+          - `895: MPI_Gather [libmpi.so.40.10.4]`
+            * `ompi_coll_base_gather_intra_basic_linear [libmpi.so.40.10.4]`
+                + `mca_pml_ob1_recv [mca_pml_ob1.so]`
+                  - `__sched_yield [libc-2.17.so]`
+                    * `<unknown file> [libc-2.17.so]`
+
+Now, this is capturing information about *internal* MPI calls, which we have no control over and thus don't care about, so lets focus on this path with times Fair inclusive CPUTIME (%), Unfair inclusive CPUTIME (%), Unfair - Fair inclusive CPUTIME
++ `main`: 1.72e+02s (4.6%), 1.81e+02s (4.6%), 8.77e+00s
+  - `loop at miniapp.c:945`: 1.50e+02s (4.0%), 1.60e+02s (4.1%), 1.01e+01s
+    * `950: sum_distributed_array`: 4.69e+01s (1.2%), 5.29e+01s (1.3%), 6.00e+00s
+      + `895: MPI_Gather [libmpi.so.40.10.4]`: 2.76e-01s (0.0%), 2.97e+01s (0.8%), 2.95e+01s
+
+This tells us that we are spending 29.5 (2.95e+1) *more* seconds performing the Gather section of the distributed array summation in the unfair case than the fair case.
+Now, HPCToolkit can't tell us *why* that's happening, but it is a good place to start.
+
+The 29.5 seconds does not account for the 139 additional seconds of time, so lets look around for some more time.
+We're currently under `sum_distributed_array`, with `MPI_Gather` at +29.5 seconds but `sum_local_array` at -23.5 seconds, so the additional time comes from somewhere not under the `sum_distributed_array` call-tree.
+
+Going to its sibling call, `in_place_stencilize_distributed_array`, we can select it and use the hotpath tool again, giving this path:
++ ` main` : 1.72e+02s (4.6%), 1.81e+02s (4.6%), 8.77e+00s
+  - `loop at miniapp.c:945` : 1.50e+02s (4.0%), 1.60e+02s (4.1%), 1.01e+01s
+    * ` 950: sum_distributed_array` : 4.69e+01s (1.2%), 5.29e+01s (1.3%), 6.00e+00s
+      + `947: in_place_stencilize_distributed_array` : 1.03e+02s (2.7%), 1.07e+02 (2.7%), 4.08e+00s
+        - `822: MPI_Wait [libmpi.so.40.10.4]`: 2.71e+00s (0.1%), 1.62e+01s (0.4%), 1.35e+01s
+
+This tells us that the we are spending 13.5 (1.35e+01) *more* seconds performing the Wait call at line 822 of the distributed array stencil operation in in the unfair case than the fair case.
+
+Again, HPCToolkit can't tell us *why* that's happening.
+However, this behavior is indicative of (among about 10,000 other things) the kind of distributed load balance issue, the likes of which we've created artificially with our unfair work distribution scheme.
+
+
+## Trace View
+The trace view show a multi-dimensional view programs call-stack over time across all processes and threads.
+This can shed light on sequences and phases of execution.
+
+Open the fair database with hpctraceviewer (`hpctraceviewer examples/miniapp_UArizona_Puma/miniapp.exe_fair_procs-4_threads-24_n-elts-100000000_n-iters-100_trace-yes_CPUTIME_metric-db-no.hpcdatabase`)
+
+
+There are 3 main sub-panels to focus on:
++ Trace view: 2.5D view (functions across all time and all process/threads) of whole execution.
+  Time on horizontal axis, processes (outer grouping; in alternating light/dark blue) and threads (inner grouping; in alternating light/dark pink).
+  Cursor (cross-hair) is the point in time and the process/thread used for all other views all other panels.
+  Color indicates function (as labeled on Call-Path panel) *at most* as deep as the current depth (as indicated in call path depth and depth view cursor)
++ Call Path and statistics tabs (mainly the call path): Call stack at this point in time for the particular process/thread.
+  Selected call changes the call depth for the trace and depth views.
++ Depth View: 2D view ( function stack across all time) of the execution of one thread in a process.
+  Time on horizontal axis (matching trace view), call stack on vertical axis (call path matches this view at the current time position)
+  Color indicates function (as labeled on Call-Path panel) at the particular depth (as indicated in call path depth and this view's curor).
+  Cursor (tall cross-hair) is the time (vertical tall part of cursor) and depth (short horizontal part of cursor).
+
+
+(TODO insert figure(s?) for whole window breakdown)
+(TODO insert gif of trace view breakdown)
