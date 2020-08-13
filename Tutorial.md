@@ -19,11 +19,12 @@ The demo in this tutorial uses the Miniapp program: a toy distributed stencil co
     * [Binary Analaysis With HPCToolkit](#Binary-Analaysis-With-HPCToolkit)
     * [Running Application With HPCToolkit](#Dynamic-Performance-Profiling-Application-With-HPCToolkit)
     * [Building Performance Database](#Building-Performance-Database)
-
   + [Viewing Profile](#Viewing-Profile)
     * [Source View (`hpcviewer`)](#Source-View-hpcviewer)
     * [Trace View (`hpctraceviewer`)](#Trace-View-hpctraceviewer)
-
+  + [Fair / Unfair Demo](#Fair-Unfair Demo)
+    * [Source View Comparison](#Source-View-Comparison)
+    * [Trace View](#Trace-View)
 # External Resources
 Documentation:
 + [HPCToolkit Manual](http://hpctoolkit.org/manual/HPCToolkit-users-manual.pdf). This should be the go-to source for all questions related to using HPCToolkit software.
@@ -299,7 +300,7 @@ There are 3 main sub-panels to focus on:
 
 
 Below is a visual breakdown of the trace view
-![Visual Breakdown of Trace View](documentation_assets/images/Trace view Annotated_Large.png)
+![Visual Breakdown of Trace View](documentation_assets/images/Trace-view-Annotated_Large.png)
 
 The trace view can be somewhat complicated to understand.
 The functions displayed in that view are the functions which are *at most* at the depth selected.
