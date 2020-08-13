@@ -431,10 +431,10 @@ hpctraceviewer examples/miniapp_UArizona_Puma/miniapp.exe_unfair_procs-4_threads
   PS: HPCToolkit folks, maybe have a different color selection algorithm)
 
 Trace of fair run (with annotations) at depth 2:
-![Fair trace (with annotations)](documentation_assets/images/annotated_fair-4-24-10e6-100-cputime_depth2.png.png)
+![Fair trace (with annotations)](documentation_assets/images/annotated_fair-4-24-10e6-100-cputime_depth2.png)
 
 Trace of unfair run (with annotations) at depth 2:
-![Unfair trace (with annotations)](documentation_assets/images/annotated_unfair-4-24-10e6-100-cputime_depth2.png.png)
+![Unfair trace (with annotations)](documentation_assets/images/annotated_unfair-4-24-10e6-100-cputime_depth2.png)
 
 First, each rank/process's 0th thread is the main thread for that process.
 We can see that this is the case, as moving our cursor onto any rank's 0th thread should show `<program root>` at the of the call path.
