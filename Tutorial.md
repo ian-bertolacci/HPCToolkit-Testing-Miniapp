@@ -318,8 +318,8 @@ If the depth is 1, then `bar` and `fizz` are displayed.
 However if the depth of 2, then `bar` and `fizz` are displayed, because thread 1 has no deeper functions.
 This is extended for the time axis, where the stack is changing in a thread over time.
 
-
-The there is also
+One strange thing I've noticed is that there are *always* 2 extra threads being show, even when the program was explicitly run with one thread.
+I dunno why that happens, but it's something to be aware of.
 
 
 # Fair / Unfair Demo
@@ -370,9 +370,8 @@ To enter our formula, we'll use the Assistance sub-panel.
 + Then enter "-" (for minus) after the variable inserted by what we just did.
 + Then from the "Metrics" dropdown, select "1-CPUTIME (sec):Sum (I)" (the fair run's inclusive CPUTIME column).
 + Then click "Point-wise" to insert the point-wise column variable into the Formula.
-  If the columns inserted by "Assistance" got out of order somehow, fix them; its just a simple equation.
-
-Then click "OK" at the bottom of the "Creating a derived metric" window.
++ I end up with the equation `$210 - $208`.
++ Finally, click "OK" at the bottom of the "Creating a derived metric" window.
 
 This will add the "Diff CPUTIME(sec) (I) (Unfair - Fair)" column to the "3-Top-down view" tab (it will be the last column; you may have to scroll to find it).
 
@@ -420,6 +419,82 @@ However, this behavior is indicative of (among about 10,000 other things) the ki
 
 ## Trace View
 
+Lets look at the fair and unfair runs.
+We can do this simultaneously with hpctraceviewer since it lists the database path:
+```bash
+hpctraceviewer examples/miniapp_UArizona_Puma/miniapp.exe_fair_procs-4_threads-24_n-elts-100000000_n-iters-100_trace-yes_CPUTIME_metric-db-no.hpcdatabase &
+hpctraceviewer examples/miniapp_UArizona_Puma/miniapp.exe_unfair_procs-4_threads-24_n-elts-100000000_n-iters-100_trace-yes_CPUTIME_metric-db-no.hpcdatabase
+```
 
-Getting back to the fair/unfair example, lets look at the fair database.
-Open the fair database with hpctraceviewer (`hpctraceviewer examples/miniapp_UArizona_Puma/miniapp.exe_fair_procs-4_threads-24_n-elts-100000000_n-iters-100_trace-yes_CPUTIME_metric-db-no.hpcdatabase`)
+(Note that the below examples probably have different colors.
+  This can happen naturally, but I also re-colored to make some things stand out.
+  PS: HPCToolkit folks, maybe have a different color selection algorithm)
+
+Trace of fair run (with annotations) at depth 2:
+![Fair trace (with annotations)](documentation_assets/images/annotated_fair-4-24-10e6-100-cputime_depth2.png.png)
+
+Trace of unfair run (with annotations) at depth 2:
+![Unfair trace (with annotations)](documentation_assets/images/annotated_unfair-4-24-10e6-100-cputime_depth2.png.png)
+
+First, each rank/process's 0th thread is the main thread for that process.
+We can see that this is the case, as moving our cursor onto any rank's 0th thread should show `<program root>` at the of the call path.
+All the other threads have `<thread root>` as their call path root.
+
+Second, in theory, rank 0 *should* be the primary rank.
+However, it looks like rank 1 is, since rank all the other ranks' (including rank 0) thread 0 starts later than it.
+I dunno why that happens, but (like the extra threads in the trace view) it does.
+
+If you change the depth to anything deeper than 1 (2, for instance), you should immediately notice a few "regions" or phases jump out at you.
+The MiniApp can be summarized with the following psudeo-code structure:
+```
+main(){
+  array = new_array( N );
+  initialize_array( array )
+  for i in 1..T{
+    do_stencilize( array ){
+      do_local_stencilize( array.local_section )
+      send/recieve( ends )
+    }
+    total_sum += do_sum( array ){
+      local_sum = do_local_sum( array.local_section )
+      gather( local_sums )
+      return sum( local_sums )
+    }
+  }
+}
+```
+
+So we should expect to see some of these phases:
+1. creating and initializing the distributed array
+2. Multiple iterations (in this case 100) of the following sub-phases:
+  2.a. do_stencilize ()
+    2.a.i: local_stencilize
+    2.a.ii: communication
+  2.b do_sum
+    2.b.i: local_sum
+    2.a.ii: communication
+    2.a.iii: sum-of-sums
+
+We can see a few of these phases (annotated image below.)
+
+First, we can see at the very beginning a block of time executing one function.
+This is the creation and initialization phase.
+If you click on any of the trace in that phase you should see that it's either `init_distributed_array` (for the main execution threads) or `init_distributed_array_omp_fn.2` (for the OpenMP threads executing the loop inside `init_distributed_array`).
+
+Next, there is a large ocean of one function interspersed with a few other function.
+The ocean is `in_place_stencilize_distributed_array`, `in_place_stencilize_local_array` (which `in_place_stencilize_distributed_array` calls), or `in_place_stencilize_local_array._omp_fn_3` (which executes the OpenMP loop inside `in_place_stencilize_local_array`)
+Interspersed is primarily `sum_distributed_array`, `sum_local_array` (which `sum_distributed_array` calls), or `sum_local_array._omp_fn_4` (which executes the OpenMP loop inside `sum_local_array`).
+Occasionally there are calls to `gomp_team_barrier_wait_end` which is what an OpenMP thread calls to join with the others at the end of a loop.
+
+From a cursory view, it would appear that `in_place_stencilize_local_array`is the main source of execution time in the application.
+However, if you count the number of calls to `in_place_stencilize_distributed_array` or `sum_distributed_array`, you'll see that there are fewer that 100.
+There is no parallelism over the iterations, so there should each thread *is* calling both of those functions 100 times.
+The reason they do not all appear is because of the sampling rate during the tracing process.
+Calls may happen, but they begin and end between the samples, so they don't appear in the trace.
+This makes it difficult to just visually see where the performance issues, since the sampling rate may hide or amplify executions of functions.
+
+This is unlikely but not completely unreasonable.
+It is likely that `in_place_stencilize_distributed_array` does actually take up as much relative execution time as this visualization suggests.
+
+Visually comparing the fair and unfair, you can see that the interspersing of `sum_*_array` is more consistent, both in a single rank, and between ranks, in the fair case than it is in the unfair case, which is inconsistent primarily between ranks.
+This would be indicative of (among other things) a potential load imbalance.
