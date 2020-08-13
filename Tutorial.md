@@ -22,7 +22,7 @@ The demo in this tutorial uses the Miniapp program: a toy distributed stencil co
   + [Viewing Profile](#Viewing-Profile)
     * [Source View (`hpcviewer`)](#Source-View-hpcviewer)
     * [Trace View (`hpctraceviewer`)](#Trace-View-hpctraceviewer)
-  + [Fair / Unfair Demo](#Fair-Unfair-Demo)
+  + [Fair / Unfair Demo](#Fair-/-Unfair-Demo)
     * [Source View Comparison](#Source-View-Comparison)
     * [Trace View](#Trace-View)
 # External Resources
