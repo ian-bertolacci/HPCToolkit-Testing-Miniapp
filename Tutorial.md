@@ -1,25 +1,48 @@
 # HPCToolkit Tutorial
 
 This tutorial is a demo geared toward new HPCToolkit users and performance profiling novices.
-The [HPCToolkit Manual](http://hpctoolkit.org/manual/HPCToolkit-users-manual.pdf) should be the go-to source for all questions related to using HPCToolkit software.
 
 The demo in this tutorial uses the Miniapp program: a toy distributed stencil computation using MPI and OpenMP (see the [MiniApp readme](miniapp/Readme.md) for more details).
 
+
 ## Table of contents:
+- [External Resources](#external-Resources)
 - [Quick-start](#quick-start)
+  + [Full Build-Run-View](#Full-Build-Run-View)
+  + [Quick View](#Quick View)
 - [Getting Started](#getting-started)
   + [Installing HPCToolkit](#Installing-HPCToolkit)
   + [Building the MiniApp](#Building-the-MiniApp)
 - [Using HPCToolkit](#Using-HPCToolkit)
   + [Workflow](#Workflow)
   + [Analysis and Profiling](#Analysis-and-Profiling)
-    * [Binaray Analaysis With HPCToolkit](#Binaray-Analaysis-With-HPCToolkit)
+    * [Binary Analaysis With HPCToolkit](#Binary-Analaysis-With-HPCToolkit)
     * [Running Application With HPCToolkit](#Dynamic-Performance-Profiling-Application-With-HPCToolkit)
     * [Building Performance Database](#Building-Performance-Database)
 
   + [Viewing Profile](#Viewing-Profile)
     * [Source View (`hpcviewer`)](#Source-View-hpcviewer)
     * [Trace View (`hpctraceviewer`)](#Trace-View-hpctraceviewer)
+
+# External Resources
+Documentation:
++ [HPCToolkit Manual](http://hpctoolkit.org/manual/HPCToolkit-users-manual.pdf). This should be the go-to source for all questions related to using HPCToolkit software.
+
+Presentations (ordered by most recent):
++ [Profiling with HPCToolkit (2020)](https://www.youtube.com/watch?v=tIsEzzdU0lw)
++ [Profiling With HPCToolkit (2019)](https://www.youtube.com/watch?v=uXRD3PfsaJE)
++ [Analyzing Parallel Program Performance using HPCToolkit (2019)](https://www.youtube.com/watch?v=Y1Ew51tZYOk)
++ [Parallel Program Performance using HPCToolkit (2018)](https://www.youtube.com/watch?v=EEFWNhbA_F8)
++ [Analyzing Parallel Program Performance Using HPCToolkit (2017)](https://www.youtube.com/watch?v=kxgJyRi14pY)
++ [Gaining Insight into Parallel Program Performance: HPCToolkit (2016)](https://www.youtube.com/watch?v=KIlMi05WOyA)
++ [Gaining Insight into Parallel Program Performance: HPCToolkit (2015)](https://www.youtube.com/watch?v=hpANVQeC5F4)
++ [Insight into Parallel Program Performance Using HPCToolkit (2014)](https://www.youtube.com/watch?v=m3e5q7O_yOQ)
++ [Parallel Program Performance Using HPCToolkit (2014)](https://www.youtube.com/watch?v=OUhpfu5NN8Q)
+
+Publications:
++ [Full publiations Listing](http://hpctoolkit.org/publications.html)
++ [Laksono Adhianto, Sinchan Banerjee, Mike Fagan, Mark Krentel, Gabriel Marin, John Mellor-Crummey, and Nathan R. Tallent. HPCToolkit: Tools for performance analysis of optimized parallel programs. Concurrency and Computation: Practice and Experience, 22(6):685–701, 2010.](http://www.hpctoolkit.org/pubs/cpe-2010-hpctoolkit.pdf) [(doi:10.1002/cpe.1553)](https://onlinelibrary.wiley.com/doi/abs/10.1002/cpe.1553)
+
 
 # Quick-Start
 
@@ -88,7 +111,7 @@ I think the only additions that I use (which I'm not even sure are 100% necessar
 The [HPCToolkit manual](http://hpctoolkit.org/manual/HPCToolkit-users-manual.pdf) discusses the use of `hpclink` for statically linked applications, but I haven't needed that, so I cant give much instruction there.
 
 
-### Binaray Analaysis With HPCToolkit
+### Binary Analaysis With HPCToolkit
 Binary analysis is performed on an application with the `hpcstruct` command:
 ```bash
 hpcstruct <application executable>
@@ -201,35 +224,12 @@ Viewing a database using the source view is done with:
 hpcviewer <path to profile database>
 ```
 
+In the following description, it may be helpful to open hpcviewer with an existing run.
+For example `hpcviewer examples/basic_miniapp_run/example_run/miniapp.exe.hpcdatabase`.
 
-### Trace View
-Viewing a database using the source view is done with:
-```bash
-hpctraceviewer <path to profile database>
-```
-Note: the database must have been created with measurements taken with with tracing enabled for hpcrun (`hpcrun -t`)
-
-
-# Fair / Unfair Demo
-The MiniApp can be configured to run with to work distributions:
-- Fair: Each rank owns (and works on) `floor(N/processes)` elements of the distributed array, with the primary rank taking on the remainder (for a total of f`loor(N/processes) + N % processes` elements).
-  This is a fair distribution.
-  + `miniapp -d fair <other args>`
-- Unfair: Each process owns (and works on) an amount of work such `sum( rank id in range(process), (rank id +1 )*work[rank]) == N`.
-  This is to say, that the work is divided into `sum(processes)` pieces, and each rank gets `rank id + 1` of those.
-  This is unfair, as ranks with lower rank ids get less work, and the higher rank ids get a lot more work.
-  + `miniapp -d unfair <other args>`
-
-The directory [examples/miniapp_UArizona_Puma](examples/miniapp_UArizona_Puma) has dozens of previous runs using the fair/unfair distribution across a range of sizes and iterations.
-
-In this section, we will use the profile databases for run with 4 processes and 24 threads with 10^8 elements for 100 iterations in the fair and unfair distribution cases measuring CPUTIME ( [examples/miniapp_UArizona_Puma/miniapp.exe_fair_procs-4_threads-24_n-elts-100000000_n-iters-100_trace-yes_CPUTIME_metric-db-no.hpcdatabase](examples/miniapp_UArizona_Puma/miniapp.exe_fair_procs-4_threads-24_n-elts-100000000_n-iters-100_trace-yes_CPUTIME_metric-db-no.hpcdatabase), and [examples/miniapp_UArizona_Puma/miniapp.exe_unfair_procs-4_threads-24_n-elts-100000000_n-iters-100_trace-yes_CPUTIME_metric-db-no.hpcdatabase](examples/miniapp_UArizona_Puma/miniapp.exe_unfair_procs-4_threads-24_n-elts-100000000_n-iters-100_trace-yes_CPUTIME_metric-db-no.hpcdatabase) respectively)
-
-Alternatively, you can use another pair of fair-unfair runs (so long as they have the same execution parameters otherwise) and follow along.
-
-## Source View
-First, we will see what the difference is in the call-graphs between the two.
-Open the fair database with hpcviewer (`hpcviewer examples/miniapp_UArizona_Puma/miniapp.exe_fair_procs-4_threads-24_n-elts-100000000_n-iters-100_trace-yes_CPUTIME_metric-db-no.hpcdatabase`).
-Note the sub-panel with the tabs "Top-down view", "Bottom-up view", and "Flat view".
+There are two primary sub-panels in hpcviewer
+The top is a source code viewer (blank/empty initially )
+The bottom is one-or-more sub-panels with tabs
 
 Each tab is a different way of exploring the call-tree.
 Each tab has the same columns.
@@ -242,8 +242,8 @@ The column suffixed with "(E)" is the "exclusive" sum of the events (i.e. the co
 All columns can be sorted by their values or entry names (in the case of "Scope").
 
 There are also :
-+ "<program root>": Denotes function called under the program entry point (i.e. `main`)
-+ "<thread root>": Denotes function called under some arbitrary thread spawn function (such as `gomp_thread_start`).
++ `<program root>`: Denotes function called under the program entry point (i.e. `main`)
++ `<thread root>`: Denotes function called under some arbitrary thread spawn function (such as `gomp_thread_start`).
 In the top-down view, these are the roots of the caller->callees nesting.
 In the bottom-up view, these are the leaves of the callee->callers nesting.
 They are not present in the flat view.
@@ -263,20 +263,93 @@ This also works in Bottom-up mode to find the root of a hot-path
 However, I am not sure how to find the *next* hottest path.
 This tool can also be used on subtrees, to find the hottest path of the selected entry as opposed to the hottest path of the whole program.
 
-For the current profile we have open, the top-down hottest is the loop in miniapp.c:716.
 
-### Comparison
-Currently, we only have the fair profile database open.
-Lets compare the fair and unfair runs.
+
+### Trace View
+Viewing a database using the source view is done with:
+```bash
+hpctraceviewer <path to profile database>
+```
+Note: the database must have been created with measurements taken with with tracing enabled for hpcrun (`hpcrun -t`)
+
+The trace view show a multi-dimensional view programs call-stack over time across all processes and threads.
+This can shed light on sequences and phases of execution.
+
+In the following description, it may be helpful to open hpctraceviewer with an existing run.
+For example `hpctraceviewer examples/basic_miniapp_run/example_run/miniapp.exe.hpcdatabase`.
+
+There are 3 main sub-panels to focus on:
++ Trace view: 2.5D view (functions across all time and all process/threads) of whole execution.
+  Time on horizontal axis, processes (outer grouping; in alternating light/dark blue) and threads (inner grouping; in alternating light/dark pink).
+  Cursor (cross-hair) is the point in time and the process/thread used for all other views all other panels.
+  Color indicates function (as labeled on Call-Path panel) *at most* as deep as the current depth (as indicated in call path depth and depth view cursor)
++ Call Path tap: Call stack at this point in time for the particular process/thread.
+  Selected call changes the call depth for the trace and depth views.
+  The "Max depth" button will set the depth to the deepst point for all threads/processes at any point in time
+
++ Depth view tab: 2D view (function stack across all time) of the execution of one thread in a process.
+  Time on horizontal axis (matching trace view), call stack on vertical axis (call path matches this view at the current time position)
+  Color indicates function (as labeled on Call-Path panel) at the particular depth (as indicated in call path depth and this view's curor).
+  Cursor (tall cross-hair) is the time (vertical tall part of cursor) and depth (short horizontal part of cursor).
+
+ There are also these tabs/sub-panels which I am less familiar with:
++ Statistics tab: Percentage of the total time a function (or none at all) a function is running.
+  Fully independent of time and process/thread.
++ Summary view tab: 2.5D view (functions across all time and all processes) which is basically the trace view, butstacked (that's the best I can explain this without just copying the manuag. Maybe [this](https://www.smashingmagazine.com/2017/03/understanding-stacked-bar-charts/) or [this](https://python-graph-gallery.com/stacked-area-plot/) helps illustrate what I'm saying).
+
+
+Below is a visual breakdown of the trace view
+![Visual Breakdown of Trace View](documentation_assets/images/Trace view Annotated_Large.png)
+
+The trace view can be somewhat complicated to understand.
+The functions displayed in that view are the functions which are *at most* at the depth selected.
+This is explained further, but the below animation demonstrates how, as the depth changes, the trace view changes.
+![Animated Breakdown of Trace and Depth View](documentation_assets/images/Depth-Trace_Large.gif)
+
+As an example, if a process/thread's call-stack at time `t` is `[ foo, bar, baz ]` (`foo` the the oldest call in this list) and the depth is depth 0, then `foo` will be displayed at that point in time for that process/thread, since the other calls are deeper than foo.
+If the depth is 1, then `bar` will be displayed.
+
+Taking this further, if there are two threads with the following call stacks at time `t`:
++ thread 0: `[ foo, bar, baz]`
++ thread 1: `[ buzz, fizz]`
+And the depth is 0, then `foo` and `buzz` are displayed.
+If the depth is 1, then `bar` and `fizz` are displayed.
+However if the depth of 2, then `bar` and `fizz` are displayed, because thread 1 has no deeper functions.
+This is extended for the time axis, where the stack is changing in a thread over time.
+
+
+The there is also
+
+
+# Fair / Unfair Demo
+The MiniApp can be configured to run with to work distributions:
+- Fair: Each rank owns (and works on) `floor(N/processes)` elements of the distributed array, with the primary rank taking on the remainder (for a total of f`loor(N/processes) + N % processes` elements).
+  This is a fair distribution.
+  + `miniapp -d fair <other args>`
+- Unfair: Each process owns (and works on) an amount of work such `sum( rank id in range(process), (rank id +1 )*work[rank]) == N`.
+  This is to say, that the work is divided into `sum(processes)` pieces, and each rank gets `rank id + 1` of those.
+  This is unfair, as ranks with lower rank ids get less work, and the higher rank ids get a lot more work.
+  + `miniapp -d unfair <other args>`
+
+The directory [examples/miniapp_UArizona_Puma](examples/miniapp_UArizona_Puma) has dozens of previous runs using the fair/unfair distribution across a range of sizes and iterations.
+
+In this section, we will use the profile databases for run with 4 processes and 24 threads with 10^8 elements for 100 iterations in the fair and unfair distribution cases measuring CPUTIME ( [examples/miniapp_UArizona_Puma/miniapp.exe_fair_procs-4_threads-24_n-elts-100000000_n-iters-100_trace-yes_CPUTIME_metric-db-no.hpcdatabase](examples/miniapp_UArizona_Puma/miniapp.exe_fair_procs-4_threads-24_n-elts-100000000_n-iters-100_trace-yes_CPUTIME_metric-db-no.hpcdatabase), and [examples/miniapp_UArizona_Puma/miniapp.exe_unfair_procs-4_threads-24_n-elts-100000000_n-iters-100_trace-yes_CPUTIME_metric-db-no.hpcdatabase](examples/miniapp_UArizona_Puma/miniapp.exe_unfair_procs-4_threads-24_n-elts-100000000_n-iters-100_trace-yes_CPUTIME_metric-db-no.hpcdatabase) respectively)
+
+Alternatively, you can use another pair of fair-unfair runs (so long as they have the same execution parameters otherwise) and follow along.
+
+## Source View Comparison
+First, we will see what the difference is in the call-graphs between the two.
+Open the fair database with hpcviewer (`hpcviewer examples/miniapp_UArizona_Puma/miniapp.exe_fair_procs-4_threads-24_n-elts-100000000_n-iters-100_trace-yes_CPUTIME_metric-db-no.hpcdatabase`).
+Note the sub-panel with the tabs "Top-down view", "Bottom-up view", and "Flat view".
 
 Add the unfair database with File->Open database, and opening the unfair database folder (`examples/miniapp_UArizona_Puma/miniapp.exe_unfair_procs-4_threads-24_n-elts-100000000_n-iters-100_trace-yes_CPUTIME_metric-db-no.hpcdatabase`).
 
-Note that this makes a *second* sub-panel with the same of tabs, but now all the tabs are prefixed with a number (and suffixed with the executable name which is the same for both sets).
+This makes a *second* sub-panel with the same of tabs, but now all the tabs are prefixed with a number (and suffixed with the executable name which is the same for both sets).
 On the left are the tabs for the fair run, prefixed with "1" and on the right are the tabs for the unfair run prefixed with "2".
 Currently, hpcviewer does not list the database path anywhere, so you will have to keep these two straight in your mind.
 
 To view the databases metrics side-by-side, we can merge the top-down view with File->Merge databases->Merge top down databases.
-Note: I'm pretty sure that this *will not* modify the database files.
+Note: I'm *pretty sure* that this *will not* modify the database files.
 This creates a new sub-panel with a single tab: "Top-down view (miniap.exe & miniapp.exe)"
 It has the following columns:
 + "Scope",
@@ -345,31 +418,7 @@ However, this behavior is indicative of (among about 10,000 other things) the ki
 
 
 ## Trace View
-The trace view show a multi-dimensional view programs call-stack over time across all processes and threads.
-This can shed light on sequences and phases of execution.
 
+
+Getting back to the fair/unfair example, lets look at the fair database.
 Open the fair database with hpctraceviewer (`hpctraceviewer examples/miniapp_UArizona_Puma/miniapp.exe_fair_procs-4_threads-24_n-elts-100000000_n-iters-100_trace-yes_CPUTIME_metric-db-no.hpcdatabase`)
-
-
-There are 3 main sub-panels to focus on:
-+ Trace view: 2.5D view (functions across all time and all process/threads) of whole execution.
-  Time on horizontal axis, processes (outer grouping; in alternating light/dark blue) and threads (inner grouping; in alternating light/dark pink).
-  Cursor (cross-hair) is the point in time and the process/thread used for all other views all other panels.
-  Color indicates function (as labeled on Call-Path panel) *at most* as deep as the current depth (as indicated in call path depth and depth view cursor)
-+ Call Path and statistics tabs (mainly the call path): Call stack at this point in time for the particular process/thread.
-  Selected call changes the call depth for the trace and depth views.
-+ Depth View: 2D view ( function stack across all time) of the execution of one thread in a process.
-  Time on horizontal axis (matching trace view), call stack on vertical axis (call path matches this view at the current time position)
-  Color indicates function (as labeled on Call-Path panel) at the particular depth (as indicated in call path depth and this view's curor).
-  Cursor (tall cross-hair) is the time (vertical tall part of cursor) and depth (short horizontal part of cursor).
-
-Below is a visual breakdown of the trace view
-(TODO insert figure(s?) for whole window breakdown)
-
-The trace view somewhat complicated to understand.
-The functions displayed in that view are the functions which are *at most* at the depth selected.
-So if a process/thread's call-stack at time `t` is `[ foo, bar, baz ]` and the depth is depth 0, then only `foo` will be displayed at that point in time for that process/thread.
-
-The below video demonstrates how, as the depth changes, the trace view changes.
-(Note that this is from a different trace of the miniapp)
-(TODO insert gif of trace view breakdown)
