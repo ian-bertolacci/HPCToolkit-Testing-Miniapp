@@ -9,20 +9,20 @@ The demo in this tutorial uses the Miniapp program: a toy distributed stencil co
 - [External Resources](#external-Resources)
 - [Quick-start](#quick-start)
   + [Full Build-Run-View](#Full-Build-Run-View)
-  + [Quick View](#Quick View)
+  + [Quick View](#Quick-View)
 - [Getting Started](#getting-started)
   + [Installing HPCToolkit](#Installing-HPCToolkit)
   + [Building the MiniApp](#Building-the-MiniApp)
 - [Using HPCToolkit](#Using-HPCToolkit)
   + [Workflow](#Workflow)
   + [Analysis and Profiling](#Analysis-and-Profiling)
-    * [Binary Analaysis With HPCToolkit](#Binary-Analaysis-With-HPCToolkit)
-    * [Running Application With HPCToolkit](#Dynamic-Performance-Profiling-Application-With-HPCToolkit)
-    * [Building Performance Database](#Building-Performance-Database)
+    * [Binary Analaysis With HPCToolkit (`hpcstruct`)](#Binary-Analaysis-With-HPCToolkit)
+    * [Running Application With HPCToolkit (`hpcrun`)](#Dynamic-Performance-Profiling-Application-With-HPCToolkit)
+    * [Building Profile Database (`hpcprof`)](#Building-Profile-Database)
   + [Viewing Profile](#Viewing-Profile)
     * [Source View (`hpcviewer`)](#Source-View-hpcviewer)
     * [Trace View (`hpctraceviewer`)](#Trace-View-hpctraceviewer)
-  + [Fair / Unfair Demo](#Fair-Unfair Demo)
+  + [Fair / Unfair Demo](#Fair-Unfair-Demo)
     * [Source View Comparison](#Source-View-Comparison)
     * [Trace View](#Trace-View)
 # External Resources
@@ -112,7 +112,7 @@ I think the only additions that I use (which I'm not even sure are 100% necessar
 The [HPCToolkit manual](http://hpctoolkit.org/manual/HPCToolkit-users-manual.pdf) discusses the use of `hpclink` for statically linked applications, but I haven't needed that, so I cant give much instruction there.
 
 
-### Binary Analaysis With HPCToolkit
+### Binary Analaysis With HPCToolkit (`hpcstruct`)
 Binary analysis is performed on an application with the `hpcstruct` command:
 ```bash
 hpcstruct <application executable>
@@ -128,7 +128,7 @@ hpcstruct miniapp.exe -o miniapp.exe.hpcstruct
 ```
 
 
-### Dynamic Performance Profiling Application With HPCToolkit
+### Dynamic Performance Profiling Application With HPCToolkit (`hpcrun`)
 The most basic way to profile an application using HPCToolkit is with the following command:
 ```bash
 hpcrun [HPCToolkit arguments] <application> [application arguments]
@@ -183,7 +183,7 @@ mpirun -np 2 hpcrun -t -e PERF_COUNT_HW_CACHE_MISSES@f1000 -o miniapp.exe.hpcmea
 ```
 
 
-### Building Profile Database
+### Building Profile Database (`hpcprof`)
 After having performed the static binary analysis and the dynamic profiling, the profile database can now be created.
 This requires access to the source used to compile the application's binary.
 
@@ -219,7 +219,7 @@ The trace view is useful for getting an overall picture, with the source view be
 
 The [HPCToolkit Manual](http://hpctoolkit.org/manual/HPCToolkit-users-manual.pdf) has a comprehensive description of the UIs for the viewer applications.
 
-### Source View
+### Source View (`hpcviewer`)
 Viewing a database using the source view is done with:
 ```bash
 hpcviewer <path to profile database>
@@ -266,7 +266,7 @@ This tool can also be used on subtrees, to find the hottest path of the selected
 
 
 
-### Trace View
+### Trace View (`hpctraceviewer`)
 Viewing a database using the source view is done with:
 ```bash
 hpctraceviewer <path to profile database>
